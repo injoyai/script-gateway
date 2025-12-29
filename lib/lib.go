@@ -4,9 +4,7 @@ import (
 	_ "github.com/injoyai/bar"
 	_ "github.com/injoyai/base/chans"
 	_ "github.com/injoyai/conv"
-	//_ "github.com/injoyai/frame/fbr"
-	//_ "github.com/injoyai/frame/gins"
-	//_ "github.com/injoyai/frame/middle/easy_user"
+	_ "github.com/injoyai/frame/fbr"
 	_ "github.com/injoyai/ios"
 	_ "github.com/injoyai/logs"
 	"github.com/traefik/yaegi/interp"
@@ -63,12 +61,12 @@ var Symbols = interp.Exports{}
 //go:generate yaegi extract github.com/injoyai/base/str
 //go:generate yaegi extract github.com/injoyai/base/types
 
-///go:generate yaegi extract github.com/injoyai/frame
-///go:generate yaegi extract github.com/injoyai/frame/fbr
-///go:generate yaegi extract github.com/injoyai/frame/gins
-///go:generate yaegi extract github.com/injoyai/frame/middle/easy_user
-///go:generate yaegi extract github.com/injoyai/frame/middle/in
-///go:generate yaegi extract github.com/injoyai/frame/middle/swagger
+//go:generate yaegi extract github.com/injoyai/frame
+//go:generate yaegi extract github.com/injoyai/frame/fbr
+//go:generate yaegi extract github.com/injoyai/frame/gins
+//go:generate yaegi extract github.com/injoyai/frame/middle/easy_user
+//go:generate yaegi extract github.com/injoyai/frame/middle/in
+//go:generate yaegi extract github.com/injoyai/frame/middle/swagger
 
 //go:generate yaegi extract github.com/injoyai/logs
 //go:generate yaegi extract github.com/injoyai/bar

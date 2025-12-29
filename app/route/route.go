@@ -9,7 +9,6 @@ import (
 
 func Run() error {
 	s := fbr.Default()
-	s.Use(fbr.WithPrintRoutes())
 
 	s.Group("/api", func(g fbr.Grouper) {
 
