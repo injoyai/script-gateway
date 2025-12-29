@@ -1,0 +1,223 @@
+.code-editor-container {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  border-radius: 0 0 8px 8px;
+  overflow: hidden;
+  background: #263238; /* Material 主题默认背景 */
+  display: flex;
+  flex-direction: column;
+}
+
+.code-editor-container .react-codemirror2 {
+  flex: 1;
+  height: 100%;
+  overflow: hidden;
+}
+
+.code-editor-container .CodeMirror {
+  height: 100% !important;
+  min-height: 100% !important;
+  font-size: 14px;
+  line-height: 1.6;
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', 'Consolas', 'source-code-pro', monospace;
+  background: transparent !important;
+}
+
+.code-editor-container .CodeMirror-scroll {
+  min-height: 100%;
+  height: 100% !important;
+  background: transparent !important;
+  padding-bottom: 0 !important;
+  margin-bottom: 0 !important;
+  overflow-y: auto !important;
+  overflow-x: auto !important;
+}
+
+.code-editor-container .CodeMirror-wrap {
+  min-height: 100% !important;
+  height: 100% !important;
+}
+
+.code-editor-container .CodeMirror-sizer {
+  background: transparent !important;
+}
+
+.code-editor-container .CodeMirror-gutters {
+  border-right: 1px solid rgba(255, 255, 255, 0.1) !important;
+  min-height: 100% !important;
+  height: 100% !important;
+}
+
+.code-editor-container .CodeMirror-linenumbers {
+  background: transparent !important;
+  min-height: 100% !important;
+  height: 100% !important;
+}
+
+.code-editor-container .CodeMirror-lines {
+  padding: 0;
+}
+
+.code-editor-container .CodeMirror-line {
+  padding: 0 16px;
+  min-height: 1.6em;
+}
+
+/* 行号样式 */
+.code-editor-container .CodeMirror-linenumber {
+  padding: 0 8px 0 16px;
+  min-width: 50px;
+  text-align: right;
+  color: #858585;
+  font-size: 14px;
+  line-height: 1.6;
+  min-height: 1.6em;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+/* 选中行高亮 */
+.code-editor-container .CodeMirror-activeline-background {
+  background: rgba(255, 255, 255, 0.05) !important;
+}
+
+/* 匹配括号高亮 */
+.code-editor-container .CodeMirror-matchingbracket {
+  background: rgba(255, 255, 255, 0.2) !important;
+  color: inherit !important;
+  border-radius: 2px;
+}
+
+.code-editor-container .CodeMirror-nonmatchingbracket {
+  background: rgba(255, 0, 0, 0.2) !important;
+  color: inherit !important;
+}
+
+/* 滚动条样式 */
+.code-editor-container .CodeMirror-scrollbar-filler {
+  background: transparent;
+}
+
+.code-editor-container .CodeMirror-vscrollbar::-webkit-scrollbar {
+  width: 12px;
+}
+
+.code-editor-container .CodeMirror-vscrollbar::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.code-editor-container .CodeMirror-vscrollbar::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 6px;
+}
+
+.code-editor-container .CodeMirror-vscrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+.code-editor-container .CodeMirror-hscrollbar::-webkit-scrollbar {
+  height: 12px;
+}
+
+.code-editor-container .CodeMirror-hscrollbar::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.2);
+}
+
+.code-editor-container .CodeMirror-hscrollbar::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 6px;
+}
+
+.code-editor-container .CodeMirror-hscrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.3);
+}
+
+/* Material 主题优化 */
+.code-editor-container .cm-s-material {
+  background: #263238 !important;
+}
+
+.code-editor-container .cm-s-material .CodeMirror {
+  background: #263238 !important;
+}
+
+.code-editor-container .cm-s-material .CodeMirror-scroll {
+  background: #263238 !important;
+}
+
+.code-editor-container .cm-s-material .CodeMirror-gutters {
+  background: rgba(0, 0, 0, 0.3) !important;
+  min-height: 100% !important;
+  height: 100% !important;
+}
+
+.code-editor-container .cm-s-material .CodeMirror-linenumbers {
+  background: rgba(0, 0, 0, 0.3) !important;
+  min-height: 100% !important;
+  height: 100% !important;
+}
+
+.code-editor-container .cm-s-material .CodeMirror-linenumber {
+  color: #546e7a;
+}
+
+/* Monokai 主题优化 */
+.code-editor-container .cm-s-monokai {
+  background: #272822 !important;
+}
+
+.code-editor-container .cm-s-monokai .CodeMirror {
+  background: #272822 !important;
+}
+
+.code-editor-container .cm-s-monokai .CodeMirror-scroll {
+  background: #272822 !important;
+}
+
+.code-editor-container .cm-s-monokai .CodeMirror-gutters {
+  background: rgba(0, 0, 0, 0.4) !important;
+  min-height: 100% !important;
+  height: 100% !important;
+}
+
+.code-editor-container .cm-s-monokai .CodeMirror-linenumbers {
+  background: rgba(0, 0, 0, 0.4) !important;
+  min-height: 100% !important;
+  height: 100% !important;
+}
+
+.code-editor-container .cm-s-monokai .CodeMirror-linenumber {
+  color: #75715e;
+}
+
+/* Dracula 主题优化 */
+.code-editor-container .cm-s-dracula {
+  background: #282a36 !important;
+}
+
+.code-editor-container .cm-s-dracula .CodeMirror {
+  background: #282a36 !important;
+}
+
+.code-editor-container .cm-s-dracula .CodeMirror-scroll {
+  background: #282a36 !important;
+}
+
+.code-editor-container .cm-s-dracula .CodeMirror-gutters {
+  background: rgba(40, 42, 54, 0.9) !important;
+  min-height: 100% !important;
+  height: 100% !important;
+}
+
+.code-editor-container .cm-s-dracula .CodeMirror-linenumbers {
+  background: rgba(40, 42, 54, 0.9) !important;
+  min-height: 100% !important;
+  height: 100% !important;
+}
+
+.code-editor-container .cm-s-dracula .CodeMirror-linenumber {
+  color: #6272a4;
+}
+
