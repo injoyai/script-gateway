@@ -16,12 +16,18 @@ var (
 )
 
 func init() {
+
 	var err error
 	DB, err = xorms.New(
 		cfg.GetString("database.type", "sqlite"),
 		cfg.GetString("database.dsn", "./data/database/sqlite.db"),
 	)
 	logs.PrintErr(err)
+
+	if DB.Engine.DriverName() == "sqlite" {
+		DB.SetMaxOpenConns(1)
+	}
+
 	Redis = redis.New(
 		cfg.GetString("address", "127.0.0.1:6379"),
 		cfg.GetString("password"),
