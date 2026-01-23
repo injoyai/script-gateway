@@ -1,8 +1,8 @@
 package server
 
 import (
-	"script-gateway/app/common"
-	"script-gateway/internal/decode"
+	"github.com/injoyai/script-gateway/app/common"
+	"github.com/injoyai/script-gateway/internal/decode"
 )
 
 func GetDecodeList() []*decode.Info {

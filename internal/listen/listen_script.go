@@ -2,7 +2,8 @@ package listen
 
 import (
 	"context"
-	"script-gateway/lib"
+
+	"github.com/injoyai/script-gateway/lib"
 
 	"github.com/injoyai/conv"
 	"github.com/injoyai/logs"

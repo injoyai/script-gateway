@@ -1,4 +1,4 @@
-module script-gateway
+module github.com/injoyai/script-gateway
 
 go 1.23
 

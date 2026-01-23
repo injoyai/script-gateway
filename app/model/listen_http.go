@@ -1,12 +1,12 @@
 package model
 
-import "script-gateway/internal/listen"
+import "github.com/injoyai/script-gateway/internal/listen"
 
 type ListenHTTP struct {
-	ID     int64
-	Name   string
-	Port   int
-	Enable bool
+	ID     int64  `json:"id"`
+	Name   string `json:"name"`
+	Port   int    `json:"port"`
+	Enable bool   `json:"enable"`
 
 	svr listen.HTTP
 }

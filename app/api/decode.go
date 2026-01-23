@@ -1,8 +1,8 @@
 package api
 
 import (
-	"script-gateway/app/server"
-	"script-gateway/internal/decode"
+	"github.com/injoyai/script-gateway/app/server"
+	"github.com/injoyai/script-gateway/internal/decode"
 
 	"github.com/injoyai/frame/fbr"
 )

@@ -1,7 +1,7 @@
 package main
 
 import (
-	"script-gateway/app/route"
+	"github.com/injoyai/script-gateway/app/route"
 
 	"github.com/injoyai/logs"
 )
