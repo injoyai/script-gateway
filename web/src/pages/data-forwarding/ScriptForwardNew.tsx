@@ -1,12 +1,11 @@
 import React, { useState } from 'react';
 import { Layout, Tree, Card, Button, Space, message, Select } from 'antd';
-import { FileOutlined, FolderOutlined, PlusOutlined, SaveOutlined, PlayCircleOutlined } from '@ant-design/icons';
-import Editor from '@monaco-editor/react';
+import { FileOutlined, FolderOutlined, PlusOutlined, SaveOutlined, PlayCircleOutlined, CodeOutlined } from '@ant-design/icons';
+import useScriptEditorStore from '../../store/useScriptEditorStore';
 
 const { Sider, Content } = Layout;
 
-const ScriptForward: React.FC = () => {
-  const [code, setCode] = useState(`package main
+const defaultCode = `package main
 
 import (
 \t"fmt"
@@ -19,9 +18,11 @@ func Forward(data interface{}) error {
 \tfmt.Printf("Forwarding data: %s\\n", jsonData)
 \t// Add custom forwarding logic here (e.g., write to file, custom TCP, etc.)
 \treturn nil
-}`);
+}`;
 
+const ScriptForward: React.FC = () => {
   const [selectedFile, setSelectedFile] = useState('转发脚本/http_forward.go');
+  const openScriptEditor = useScriptEditorStore((s) => s.openEditor);
 
   const treeData = [
     {
@@ -47,17 +48,17 @@ func Forward(data interface{}) error {
 
   const onSelect = (keys: React.Key[], info: any) => {
     if (info.node.isLeaf) {
-      setSelectedFile(info.node.title);
-      message.info('打开 ' + info.node.title);
+      const fileName = info.node.title as string;
+      setSelectedFile(fileName);
+      openScriptEditor({
+        name: fileName,
+        content: defaultCode,
+        language: 'go',
+        onSave: async (content) => {
+          message.success(`转发脚本 ${fileName} 已保存`);
+        },
+      });
     }
-  };
-
-  const handleSave = () => {
-    message.success('转发脚本已保存');
-  };
-
-  const handleTest = () => {
-    message.info('脚本测试运行已启动...');
   };
 
   return (
@@ -78,26 +79,17 @@ func Forward(data interface{}) error {
           title={selectedFile}
           extra={
             <Space>
-              <Button icon={<PlayCircleOutlined />} onClick={handleTest}>测试运行</Button>
-              <Button icon={<SaveOutlined />} onClick={handleSave}>保存</Button>
+              <Button icon={<PlayCircleOutlined />}>测试运行</Button>
+              <Button icon={<SaveOutlined />}>保存</Button>
             </Space>
           }
-          style={{ height: '100%' }}
-          bodyStyle={{ padding: 0, height: 'calc(100% - 57px)' }}
+          style={{ height: '100%', display: 'flex', flexDirection: 'column' }}
+          bodyStyle={{ padding: 0, flex: 1, display: 'flex', justifyContent: 'center', alignItems: 'center' }}
         >
-          <Editor
-            height="100%"
-            defaultLanguage="go"
-            value={code}
-            onChange={(value: string | undefined) => setCode(value || '')}
-            theme="vs-dark"
-            options={{
-              minimap: { enabled: false },
-              fontSize: 14,
-              lineNumbers: 'on',
-              automaticLayout: true,
-            }}
-          />
+          <div style={{ textAlign: 'center', color: '#999' }}>
+            <CodeOutlined style={{ fontSize: 48, marginBottom: 16, color: '#1890ff' }} />
+            <div>点击文件已在全局编辑器中打开</div>
+          </div>
         </Card>
       </Content>
     </Layout>

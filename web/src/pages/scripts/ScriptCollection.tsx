@@ -10,12 +10,12 @@ const ScriptCollection: React.FC = () => {
       enabled: true,
       script: `package main
 
-import (
-	"fmt"
-)
+import "fmt"
 
-func main() {
+// Run 是脚本监听器入口，循环调用产生数据
+func Run() ([]byte, error) {
 	fmt.Println("Modbus数据采集脚本")
+	return nil, nil
 }`
     },
     {
@@ -24,12 +24,12 @@ func main() {
       enabled: true,
       script: `package main
 
-import (
-	"fmt"
-)
+import "fmt"
 
-func main() {
+// Run 是脚本监听器入口，循环调用产生数据
+func Run() ([]byte, error) {
 	fmt.Println("MQTT数据采集脚本")
+	return nil, nil
 }`
     },
     {
@@ -38,12 +38,12 @@ func main() {
       enabled: false,
       script: `package main
 
-import (
-	"fmt"
-)
+import "fmt"
 
-func main() {
+// Run 是脚本监听器入口，循环调用产生数据
+func Run() ([]byte, error) {
 	fmt.Println("串口数据采集脚本")
+	return nil, nil
 }`
     },
     {
@@ -52,12 +52,12 @@ func main() {
       enabled: true,
       script: `package main
 
-import (
-	"fmt"
-)
+import "fmt"
 
-func main() {
+// Run 是脚本监听器入口，循环调用产生数据
+func Run() ([]byte, error) {
 	fmt.Println("OPC UA数据采集脚本")
+	return nil, nil
 }`
     },
     {
@@ -66,12 +66,12 @@ func main() {
       enabled: true,
       script: `package main
 
-import (
-	"fmt"
-)
+import "fmt"
 
-func main() {
+// Run 是脚本监听器入口，循环调用产生数据
+func Run() ([]byte, error) {
 	fmt.Println("TCP数据采集脚本")
+	return nil, nil
 }`
     },
   ]);
@@ -105,12 +105,12 @@ func main() {
         enabled: true,
         script: `package main
 
-import (
-    "fmt"
-)
+import "fmt"
 
-func main() {
-    fmt.Println("New Collection Script")
+// Run 是脚本监听器入口，循环调用产生数据
+func Run() ([]byte, error) {
+	fmt.Println("New Collection Script")
+	return nil, nil
 }`,
       };
       setData(prev => [...prev, newItem]);

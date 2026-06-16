@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import {
   Layout,
   Tree,
@@ -11,7 +11,6 @@ import {
   Card,
   Dropdown,
   Menu,
-  Popconfirm,
   Typography,
 } from 'antd';
 import {
@@ -24,6 +23,7 @@ import {
   FolderAddOutlined,
   FileAddOutlined,
   FileTextOutlined,
+  SaveOutlined,
 } from '@ant-design/icons';
 import CodeEditor from '../../components/CodeEditor';
 import type { DataNode } from 'antd/es/tree';
@@ -46,7 +46,28 @@ interface TreeNode extends DataNode {
   originalNode: ScriptNode;
 }
 
-// 将 ScriptNode 转换为 Ant Design Tree 的 DataNode
+const languageMap: Record<string, string> = {
+  js: 'javascript',
+  ts: 'javascript',
+  py: 'python',
+  go: 'go',
+  golang: 'go',
+  sh: 'shell',
+  bash: 'shell',
+  json: 'json',
+  yaml: 'yaml',
+  yml: 'yaml',
+  xml: 'xml',
+  html: 'xml',
+  css: 'css',
+  md: 'markdown',
+};
+
+const getLanguageByPath = (path: string) => {
+  const ext = path.split('.').pop()?.toLowerCase() || '';
+  return languageMap[ext] || 'go';
+};
+
 const convertToTreeData = (node: ScriptNode): TreeNode[] => {
   if (!node.children || node.children.length === 0) {
     return [];
@@ -84,31 +105,30 @@ const ScriptManager: React.FC = () => {
   const [selectedKeys, setSelectedKeys] = useState<React.Key[]>([]);
   const [expandedKeys, setExpandedKeys] = useState<React.Key[]>([]);
   const [selectedNode, setSelectedNode] = useState<ScriptNode | null>(null);
-  const [scriptContent, setScriptContent] = useState<string>('');
   const [loading, setLoading] = useState(false);
-  const [editorLanguage, setEditorLanguage] = useState<string>('javascript');
-  const [editorTheme, setEditorTheme] = useState<string>('material');
+  const [scriptContent, setScriptContent] = useState('');
+  const [saving, setSaving] = useState(false);
 
-  // 创建相关状态
   const [createModalVisible, setCreateModalVisible] = useState(false);
   const [createForm] = Form.useForm();
   const [createType, setCreateType] = useState<'file' | 'directory'>('file');
   const [parentPath, setParentPath] = useState<string>('');
 
-  // 重命名相关状态
   const [renameModalVisible, setRenameModalVisible] = useState(false);
   const [renameForm] = Form.useForm();
   const [renameNode, setRenameNode] = useState<ScriptNode | null>(null);
 
-  // 加载脚本树
+  const selectedLanguage = useMemo(
+    () => (selectedNode?.type === 'file' ? getLanguageByPath(selectedNode.path) : 'go'),
+    [selectedNode],
+  );
+
   const loadScriptTree = useCallback(async () => {
     setLoading(true);
     try {
       const root = await getScriptTree('');
       const data = convertToTreeData(root);
       setTreeData(data);
-      
-      // 默认展开根目录
       if (root.children) {
         setExpandedKeys(root.children.map((c) => c.path));
       }
@@ -123,7 +143,6 @@ const ScriptManager: React.FC = () => {
     loadScriptTree();
   }, [loadScriptTree]);
 
-  // 选择节点
   const handleSelect = async (keys: React.Key[], info: any) => {
     if (keys.length === 0) {
       setSelectedNode(null);
@@ -135,49 +154,26 @@ const ScriptManager: React.FC = () => {
     setSelectedKeys(keys);
     setSelectedNode(node.originalNode);
 
-    // 如果是文件，加载内容
     if (node.type === 'file') {
       try {
         const content = await getScriptContent(node.path);
         setScriptContent(content);
-        
-        // 根据文件扩展名设置编辑器语言
-        const ext = node.path.split('.').pop()?.toLowerCase();
-        const langMap: Record<string, string> = {
-          js: 'javascript',
-          ts: 'typescript',
-          py: 'python',
-          go: 'go',
-          golang: 'go',
-          sh: 'shell',
-          bash: 'shell',
-          json: 'javascript',
-          yaml: 'yaml',
-          yml: 'yaml',
-          xml: 'xml',
-          html: 'xml',
-          css: 'css',
-          md: 'markdown',
-        };
-        setEditorLanguage(langMap[ext || ''] || 'go'); // 默认使用 Go
       } catch (error: any) {
         message.error('加载脚本内容失败: ' + (error.message || '未知错误'));
-        setScriptContent('');
       }
-    } else {
-      setScriptContent('');
+      return;
     }
+
+    setScriptContent('');
   };
 
-  // 展开/收起节点
   const handleExpand = (keys: React.Key[]) => {
     setExpandedKeys(keys);
   };
 
-  // 创建文件或文件夹
-  const handleCreate = (type: 'file' | 'directory', parentPath?: string) => {
+  const handleCreate = (type: 'file' | 'directory', nextParentPath?: string) => {
     setCreateType(type);
-    setParentPath(parentPath || '');
+    setParentPath(nextParentPath || '');
     createForm.resetFields();
     createForm.setFieldsValue({
       name: '',
@@ -186,94 +182,80 @@ const ScriptManager: React.FC = () => {
     setCreateModalVisible(true);
   };
 
-  // 提交创建
   const handleCreateSubmit = async () => {
     try {
       const values = await createForm.validateFields();
-      const fullPath = parentPath
-        ? `${parentPath}/${values.name}`
-        : values.name;
-
+      const fullPath = parentPath ? `${parentPath}/${values.name}` : values.name;
       await createScript(fullPath, createType === 'directory', values.content || '');
       message.success(`${createType === 'directory' ? '文件夹' : '文件'}创建成功`);
       setCreateModalVisible(false);
-      loadScriptTree();
+      await loadScriptTree();
     } catch (error: any) {
-      if (error.errorFields) {
-        return; // 表单验证错误
-      }
+      if (error.errorFields) return;
       message.error('创建失败: ' + (error.message || '未知错误'));
     }
   };
 
-  // 保存脚本内容
   const handleSave = async () => {
-    if (!selectedNode || selectedNode.type === 'directory') {
-      message.warning('请选择要保存的文件');
-      return;
-    }
-
+    if (!selectedNode || selectedNode.type !== 'file') return;
     try {
+      setSaving(true);
       await updateScript(selectedNode.path, scriptContent);
       message.success('保存成功');
-      loadScriptTree();
+      await loadScriptTree();
     } catch (error: any) {
       message.error('保存失败: ' + (error.message || '未知错误'));
+    } finally {
+      setSaving(false);
     }
   };
 
-  // 删除文件或文件夹
   const handleDelete = async (node: ScriptNode) => {
     try {
       await deleteScript(node.path);
       message.success('删除成功');
       if (selectedNode?.path === node.path) {
         setSelectedNode(null);
-        setScriptContent('');
         setSelectedKeys([]);
+        setScriptContent('');
       }
-      loadScriptTree();
+      await loadScriptTree();
     } catch (error: any) {
       message.error('删除失败: ' + (error.message || '未知错误'));
     }
   };
 
-  // 重命名
   const handleRename = (node: ScriptNode) => {
     setRenameNode(node);
     renameForm.setFieldsValue({ name: node.name });
     setRenameModalVisible(true);
   };
 
-  // 提交重命名
   const handleRenameSubmit = async () => {
     if (!renameNode) return;
 
     try {
       const values = await renameForm.validateFields();
-      const parentPath = renameNode.path.split('/').slice(0, -1).join('/');
-      const newPath = parentPath ? `${parentPath}/${values.name}` : values.name;
+      const currentParentPath = renameNode.path.split('/').slice(0, -1).join('/');
+      const newPath = currentParentPath ? `${currentParentPath}/${values.name}` : values.name;
 
       await moveScript(renameNode.path, newPath);
       message.success('重命名成功');
       setRenameModalVisible(false);
-      
-      // 如果重命名的是当前选中的文件，更新选中状态
+
       if (selectedNode?.path === renameNode.path) {
-        setSelectedNode({ ...selectedNode, path: newPath, name: values.name });
+        const nextNode = { ...selectedNode, path: newPath, name: values.name };
+        setSelectedNode(nextNode);
         setSelectedKeys([newPath]);
       }
-      
-      loadScriptTree();
+
+      await loadScriptTree();
     } catch (error: any) {
-      if (error.errorFields) {
-        return;
-      }
+      if (error.errorFields) return;
       message.error('重命名失败: ' + (error.message || '未知错误'));
     }
   };
 
-  // 右键菜单
   const getContextMenu = (node: ScriptNode) => (
     <Menu>
       <Menu.Item
@@ -333,7 +315,6 @@ const ScriptManager: React.FC = () => {
     </Menu>
   );
 
-  // 渲染树节点
   const renderTreeNodes = (nodes: TreeNode[]): DataNode[] => {
     return nodes.map((node) => {
       const scriptNode = node.originalNode;
@@ -358,12 +339,12 @@ const ScriptManager: React.FC = () => {
 
   return (
     <Layout style={{ height: 'calc(100vh - 200px)', background: '#f5f5f5' }}>
-      <Sider 
-        width={320} 
-        style={{ 
-          background: '#fff', 
+      <Sider
+        width={320}
+        style={{
+          background: '#fff',
           borderRight: '1px solid #e8e8e8',
-          boxShadow: '2px 0 8px rgba(0,0,0,0.06)'
+          boxShadow: '2px 0 8px rgba(0,0,0,0.06)',
         }}
       >
         <Card
@@ -374,10 +355,10 @@ const ScriptManager: React.FC = () => {
             </span>
           }
           size="small"
-          headStyle={{ 
+          headStyle={{
             background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
             borderBottom: 'none',
-            padding: '12px 16px'
+            padding: '12px 16px',
           }}
           bodyStyle={{ padding: '12px', height: 'calc(100vh - 250px)', overflow: 'auto' }}
           extra={
@@ -447,66 +428,42 @@ const ScriptManager: React.FC = () => {
                 )}
               </Space>
             }
-            extra={
-              selectedNode.type === 'file' && (
-                <Space>
-                  <Button 
-                    type="default" 
-                    size="small"
-                    onClick={() => {
-                      const themes: ('material' | 'monokai' | 'dracula')[] = ['material', 'monokai', 'dracula'];
-                      const currentIndex = themes.indexOf(editorTheme as any);
-                      const nextIndex = (currentIndex + 1) % themes.length;
-                      setEditorTheme(themes[nextIndex]);
-                    }}
-                  >
-                    切换主题
-                  </Button>
-                  <Button 
-                    type="primary" 
-                    icon={<EditOutlined />} 
-                    onClick={handleSave}
-                    style={{
-                      background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
-                      border: 'none',
-                      boxShadow: '0 2px 8px rgba(102, 126, 234, 0.4)'
-                    }}
-                  >
-                    保存
-                  </Button>
-                </Space>
-              )
-            }
-            bodyStyle={{ padding: 0, height: 'calc(100vh - 250px)' }}
+            extra={selectedNode.type === 'file' ? (
+              <Button type="primary" icon={<SaveOutlined />} loading={saving} onClick={handleSave}>
+                保存
+              </Button>
+            ) : undefined}
+            bodyStyle={{ padding: 0, height: 'calc(100vh - 250px)', overflow: 'hidden' }}
             style={{
               boxShadow: '0 4px 12px rgba(0,0,0,0.08)',
               borderRadius: '8px',
-              overflow: 'hidden'
+              overflow: 'hidden',
             }}
           >
             {selectedNode.type === 'file' ? (
               <CodeEditor
                 value={scriptContent}
                 onChange={setScriptContent}
-                language={editorLanguage}
-                theme={editorTheme as 'material' | 'monokai' | 'dracula'}
-                placeholder="编辑脚本内容..."
-                height="calc(100vh - 300px)"
+                language={selectedLanguage}
+                theme="material"
+                height="100%"
               />
             ) : (
-              <div style={{ 
-                padding: 48, 
-                textAlign: 'center', 
-                color: '#999',
-                background: 'linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%)',
-                height: '100%',
-                display: 'flex',
-                flexDirection: 'column',
-                justifyContent: 'center',
-                alignItems: 'center'
-              }}>
+              <div
+                style={{
+                  padding: 48,
+                  textAlign: 'center',
+                  color: '#999',
+                  background: 'linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%)',
+                  height: '100%',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  justifyContent: 'center',
+                  alignItems: 'center',
+                }}
+              >
                 <FolderOutlined style={{ fontSize: 64, marginBottom: 16, color: '#1890ff' }} />
-                <div style={{ fontSize: 16 }}>选择一个文件以查看和编辑内容</div>
+                <div style={{ fontSize: 16 }}>当前选中的是文件夹</div>
               </div>
             )}
           </Card>
@@ -519,7 +476,7 @@ const ScriptManager: React.FC = () => {
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              background: 'linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%)'
+              background: 'linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%)',
             }}
           >
             <div style={{ textAlign: 'center', color: '#999' }}>
@@ -530,7 +487,6 @@ const ScriptManager: React.FC = () => {
         )}
       </Content>
 
-      {/* 创建文件/文件夹对话框 */}
       <Modal
         title={`新建${createType === 'directory' ? '文件夹' : '文件'}`}
         open={createModalVisible}
@@ -555,7 +511,6 @@ const ScriptManager: React.FC = () => {
         </Form>
       </Modal>
 
-      {/* 重命名对话框 */}
       <Modal
         title="重命名"
         open={renameModalVisible}
@@ -579,4 +534,3 @@ const ScriptManager: React.FC = () => {
 };
 
 export default ScriptManager;
-

@@ -36,8 +36,8 @@ const DeviceList: React.FC = () => {
       key: 'action',
       render: (_: any, record: Device) => (
         <Space size="middle">
-          <a>编辑</a>
-          <a>删除</a>
+          <Button type="link" size="small" style={{ padding: 0 }}>编辑</Button>
+          <Button type="link" size="small" danger style={{ padding: 0 }}>删除</Button>
         </Space>
       ),
     },

@@ -4,8 +4,17 @@ import (
 	"time"
 
 	"github.com/injoyai/conv"
+	"github.com/injoyai/script-gateway/internal/types"
 )
 
+// Dispatcher 统一分发器接口
+type Dispatcher interface {
+	Push(msg *types.Message) error
+	Close() error
+	Topics() []string
+}
+
+// Pusher 向后兼容的旧接口
 type Pusher interface {
 	Push(msg any) error
 }

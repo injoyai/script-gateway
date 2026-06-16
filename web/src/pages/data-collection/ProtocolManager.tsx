@@ -1,25 +1,24 @@
 import React, { useState } from 'react';
 import { Tree, Card, Button, Space, message } from 'antd';
-import { DownOutlined, FileOutlined, FolderOutlined, SaveOutlined, DownloadOutlined } from '@ant-design/icons';
-import Editor from '@monaco-editor/react';
+import { FileOutlined, FolderOutlined, SaveOutlined, DownloadOutlined, CodeOutlined } from '@ant-design/icons';
+import useScriptEditorStore from '../../store/useScriptEditorStore';
 
 const { DirectoryTree } = Tree;
 
 const initialFileContent = `package main
 
-import (
-	"fmt"
-)
+import "fmt"
 
-// This is a sample protocol script
-func main() {
-	fmt.Println("Protocol Handler initialized")
+// Decode 协议解码函数，输入原始数据，输出解析结果
+func Decode(data []byte) (map[string]any, error) {
+	fmt.Printf("Decoding %d bytes\\n", len(data))
+	return map[string]any{"raw": data}, nil
 }
 `;
 
 const ProtocolManager: React.FC = () => {
-  const [code, setCode] = useState(initialFileContent);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
+  const openScriptEditor = useScriptEditorStore((s) => s.openEditor);
 
   const treeData = [
     {
@@ -50,14 +49,17 @@ const ProtocolManager: React.FC = () => {
 
   const onSelect = (keys: React.Key[], info: any) => {
     if (info.node.isLeaf) {
-      setSelectedFile(info.node.title as string);
-      // In a real app, fetch file content here
-      message.info('Opened ' + info.node.title);
+      const fileName = info.node.title as string;
+      setSelectedFile(fileName);
+      openScriptEditor({
+        name: fileName,
+        content: initialFileContent,
+        language: 'go',
+        onSave: async (content) => {
+          message.success(`文件 ${fileName} 保存成功`);
+        },
+      });
     }
-  };
-
-  const handleSave = () => {
-      message.success('文件保存成功');
   };
 
   return (
@@ -78,44 +80,16 @@ const ProtocolManager: React.FC = () => {
           title={selectedFile ? selectedFile : "选择一个文件"} 
           extra={
             <Space>
-              <Button icon={<SaveOutlined />} onClick={handleSave} disabled={!selectedFile}>保存</Button>
+              <Button icon={<SaveOutlined />} disabled={!selectedFile}>保存</Button>
               <Button icon={<DownloadOutlined />} disabled={!selectedFile}>下载</Button>
             </Space>
           }
-          headStyle={{ background: '#1e1e1e', color: '#fff', borderBottom: '1px solid #333' }}
-          bodyStyle={{ padding: 0, flex: 1, height: '100%', background: '#1e1e1e' }}
-          style={{ height: '100%', display: 'flex', flexDirection: 'column', background: '#1e1e1e' }}
+          style={{ height: '100%', display: 'flex', flexDirection: 'column' }}
+          bodyStyle={{ padding: 0, flex: 1, display: 'flex', justifyContent: 'center', alignItems: 'center' }}
         >
-          <div style={{ height: '100%', minHeight: 400, background: '#1e1e1e' }}>
-            <Editor
-              height="100%"
-              defaultLanguage="go"
-              value={code}
-              onChange={(value?: string) => setCode(value || '')}
-              theme="gw-dark"
-              options={{
-                lineNumbers: 'on',
-                glyphMargin: true,
-                minimap: { enabled: false },
-                automaticLayout: true,
-                renderLineHighlight: 'none',
-                scrollBeyondLastLine: false,
-              }}
-              onMount={(editor: any, monaco: any) => {
-                monaco.editor.defineTheme('gw-dark', {
-                  base: 'vs-dark',
-                  inherit: true,
-                  rules: [],
-                  colors: {
-                    'editor.background': '#1e1e1e',
-                    'editorGutter.background': '#1e1e1e',
-                    'editorLineNumber.foreground': '#858585',
-                    'editorLineNumber.activeForeground': '#c6c6c6',
-                  },
-                });
-                monaco.editor.setTheme('gw-dark');
-              }}
-            />
+          <div style={{ textAlign: 'center', color: '#999' }}>
+            <CodeOutlined style={{ fontSize: 48, marginBottom: 16, color: '#1890ff' }} />
+            <div>点击文件已在全局编辑器中打开</div>
           </div>
         </Card>
       </div>

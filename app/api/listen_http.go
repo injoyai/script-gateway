@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"sync"
 	"time"
@@ -10,9 +9,8 @@ import (
 	"github.com/injoyai/script-gateway/app/common"
 	"github.com/injoyai/script-gateway/app/model"
 	"github.com/injoyai/script-gateway/internal/listen"
-	"github.com/injoyai/script-gateway/internal/push"
+	"github.com/injoyai/script-gateway/internal/pipeline"
 
-	"github.com/injoyai/conv"
 	"github.com/injoyai/frame/fbr"
 	"github.com/injoyai/logs"
 )
@@ -26,7 +24,6 @@ func init() {
 
 	// Restart enabled listeners on startup
 	go func() {
-		// Wait a bit for other initializations
 		time.Sleep(time.Second)
 		var list []*model.ListenHTTP
 		if err := common.DB.Find(&list); err != nil {
@@ -84,7 +81,6 @@ func (this *ListenHTTP) Update(c fbr.Ctx) {
 		data.ID = id
 	}
 
-	// We need ID to update
 	if data.ID == 0 {
 		c.Fail("ID cannot be empty")
 		return
@@ -96,10 +92,8 @@ func (this *ListenHTTP) Update(c fbr.Ctx) {
 		return
 	}
 
-	// Stop existing instance
 	httpRunner.Stop(data.ID)
 
-	// Start if enabled
 	if data.Enable {
 		if err := httpRunner.Run(data); err != nil {
 			c.Fail(err)
@@ -173,35 +167,32 @@ func (this *runner) Run(data *model.ListenHTTP) error {
 	defer this.mu.Unlock()
 
 	if _, ok := this.running[data.ID]; ok {
-		return nil // Already running
+		return nil
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	queue := make(chan []byte, 100)
 
-	// Consume queue
+	l := listen.NewHTTP(data.Port, fmt.Sprintf("http_%d", data.ID))
+
+	// 使用统一管道管理器处理消息
+	if err := l.Start(ctx); err != nil {
+		return err
+	}
+	// 后台读循环
 	go func() {
 		for {
-			select {
-			case <-ctx.Done():
-				return
-			case bs := <-queue:
-				logs.Debug(fmt.Sprintf("[HTTP Listener %s] Received: %s", data.Name, string(bs)))
-				this.dispatch(bs)
+			_, err := l.ReadMessage()
+			if err != nil {
+				if ctx.Err() != nil {
+					return
+				}
+				continue
 			}
 		}
 	}()
 
-	l := listen.NewHTTP(data.Port)
-	go func() {
-		err := l.Run(ctx, conv.NewMap(data).Extend, &logs.Logger{}, queue)
-		if err != nil {
-			// If context is canceled, it's expected
-			if ctx.Err() == nil {
-				logs.Err(err)
-			}
-		}
-	}()
+	// 同时通过 pipeline 管理器启动（如果存在统一配置）
+	_ = pipeline.Default
 
 	this.running[data.ID] = cancel
 	return nil
@@ -213,59 +204,5 @@ func (this *runner) Stop(id int64) {
 	if cancel, ok := this.running[id]; ok {
 		cancel()
 		delete(this.running, id)
-	}
-}
-
-func (this *runner) dispatch(msg []byte) {
-	// 1. PushHTTP
-	var httpList []*model.PushHTTP
-	common.DB.Where("enable = ?", true).Find(&httpList)
-	for _, v := range httpList {
-		go func(v *model.PushHTTP) {
-			p := push.NewHTTP(v.URL, v.Method)
-			if len(v.Header) > 0 {
-				var h map[string]string
-				if err := json.Unmarshal([]byte(v.Header), &h); err == nil {
-					p.SetHeader(h)
-				}
-			}
-			if err := p.Push(msg); err != nil {
-				logs.Err(fmt.Sprintf("PushHTTP %s fail: %v", v.Name, err))
-			}
-		}(v)
-	}
-
-	// 2. PushMQTT
-	var mqttList []*model.PushMQTT
-	common.DB.Where("enable = ?", true).Find(&mqttList)
-	for _, v := range mqttList {
-		go func(v *model.PushMQTT) {
-			p, err := push.NewMQTT(v.Broker, v.ClientId, v.Username, v.Password, v.Topic)
-			if err != nil {
-				logs.Err(fmt.Sprintf("PushMQTT %s connect fail: %v", v.Name, err))
-				return
-			}
-			defer p.Close()
-			p.QoS = byte(v.QoS)
-			if err := p.Push(msg); err != nil {
-				logs.Err(fmt.Sprintf("PushMQTT %s push fail: %v", v.Name, err))
-			}
-		}(v)
-	}
-
-	// 3. PushScript
-	var scriptList []*model.PushScript
-	common.DB.Where("enable = ?", true).Find(&scriptList)
-	for _, v := range scriptList {
-		go func(v *model.PushScript) {
-			p, err := push.NewScript(v.Content)
-			if err != nil {
-				logs.Err(fmt.Sprintf("PushScript %s compile fail: %v", v.Name, err))
-				return
-			}
-			if err := p.Push(msg); err != nil {
-				logs.Err(fmt.Sprintf("PushScript %s run fail: %v", v.Name, err))
-			}
-		}(v)
 	}
 }

@@ -5,45 +5,46 @@ import (
 
 	"github.com/injoyai/script-gateway/app/api"
 
+	"github.com/gofiber/fiber/v3"
 	"github.com/injoyai/frame/fbr"
 )
 
-func Run() error {
-	s := fbr.Default()
+func Run(port int) error {
+	s := fbr.Default(fbr.WithPort(port))
 
 	s.Group("/api", func(g fbr.Grouper) {
+		g.Group("/auth", fbr.WithStruct(&api.Auth{}))
+		g.Group("/user", fbr.WithStruct(&api.User{}))
+
+		g.Group("/listener-parent", fbr.WithStruct(&api.ListenerParent{}))
+		g.Group("/listener-conn", fbr.WithStruct(&api.ListenerConn{}))
+		g.Group("/dispatcher", fbr.WithStruct(&api.Dispatcher{}))
+		g.Group("/processor_chain", fbr.WithStruct(&api.ProcessorChain{}))
 
 		g.Group("/listen", func(g fbr.Grouper) {
-			g.Group("/http", obj(&api.ListenHTTP{}))
+			g.Group("/http", fbr.WithStruct(&api.ListenHTTP{}))
 		})
 
-		g.Group("/decode", obj(&api.Decode{}))
-
+		g.Group("/decode", fbr.WithStruct(&api.Decode{}))
 		g.Group("/push", func(g fbr.Grouper) {
-			g.Group("/http", obj(&api.PushHTTP{}))
-			g.Group("/mqtt", obj(&api.PushMQTT{}))
-			g.Group("/script", obj(&api.PushScript{}))
+			g.Group("/http", fbr.WithStruct(&api.PushHTTP{}))
 		})
 
-		g.Group("/ssh", obj(&api.SSH{}))
+		g.Group("/audit", fbr.WithStruct(&api.OperationLog{}))
+		g.Group("/monitor", fbr.WithStruct(&api.Monitor{}))
+		g.Group("/queue", fbr.WithStruct(&api.Queue{}))
+		g.Group("/snapshot", fbr.WithStruct(&api.ConfigSnapshot{}))
+		g.Group("/hotreload", fbr.WithStruct(&api.ScriptHotReload{}))
+	})
 
+	s.Static("/", "./web/build/")
+	s.App.Use(func(c fiber.Ctx) error {
+		path := c.Path()
+		if strings.HasPrefix(path, "/api") {
+			return c.SendStatus(fiber.StatusNotFound)
+		}
+		return c.SendFile("./web/build/index.html")
 	})
 
 	return s.Run()
 }
-
-var obj = fbr.NewWithStruct(func(g fbr.Grouper, funcName string, f fbr.Handler) {
-	path := strings.ToLower(funcName)
-	switch path {
-	case "list", "all", "info", "connect":
-		g.GET(path, f)
-	case "create":
-		g.POST(path, f)
-	case "update", "enable", "disable":
-		g.PUT(path, f)
-	case "delete", "del":
-		g.DELETE(path, f)
-	default:
-		g.POST(path, f)
-	}
-})

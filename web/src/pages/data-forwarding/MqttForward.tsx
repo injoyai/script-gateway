@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Table, Button, Switch, Modal, Form, Input, InputNumber, message, Space, Popconfirm, Card, Tag } from 'antd';
+import { Table, Button, Switch, Modal, Form, Input, InputNumber, message, Space, Popconfirm, Card } from 'antd';
 import { PlusOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons';
 import { getPushMqtts, createPushMqtt, updatePushMqtt, deletePushMqtt, enablePushMqtt, disablePushMqtt, PushMqtt } from '../../services/scriptApi';
 

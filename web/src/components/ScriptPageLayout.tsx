@@ -1,11 +1,10 @@
-import React, { useState } from 'react';
-import { Layout, Card, List, Button, Switch, Space, Popconfirm, message, Typography } from 'antd';
-import { 
-  PlusOutlined, 
-  DeleteOutlined, 
-  FileTextOutlined, 
+import React, { useEffect, useMemo, useState } from 'react';
+import { Layout, Card, List, Button, Switch, Space, Popconfirm, Typography, Modal } from 'antd';
+import {
+  PlusOutlined,
+  DeleteOutlined,
+  FileTextOutlined,
   SaveOutlined,
-  EditOutlined 
 } from '@ant-design/icons';
 import CodeEditor from './CodeEditor';
 
@@ -46,12 +45,52 @@ const ScriptPageLayout: React.FC<ScriptPageLayoutProps> = ({
   placeholder = '请从左侧选择脚本...',
   extraButtons,
   bottomPanel,
-  showEnableSwitch = true
+  showEnableSwitch = true,
 }) => {
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const selectedItem = items.find(item => item.id === selectedId);
+  const [draftScript, setDraftScript] = useState('');
+
+  const selectedItem = useMemo(
+    () => items.find(item => item.id === selectedId),
+    [items, selectedId],
+  );
+
+  const isDirty = !!selectedItem && draftScript !== (selectedItem.script || '');
+
+  useEffect(() => {
+    if (!items.length) {
+      setSelectedId(null);
+      setDraftScript('');
+      return;
+    }
+    if (!selectedId || !items.some(item => item.id === selectedId)) {
+      setSelectedId(items[0].id);
+    }
+  }, [items, selectedId]);
+
+  useEffect(() => {
+    if (selectedItem) {
+      setDraftScript(selectedItem.script || '');
+    } else {
+      setDraftScript('');
+    }
+  }, [selectedItem]);
 
   const handleSelect = (item: ScriptItem) => {
+    if (selectedId === item.id) return;
+    if (isDirty) {
+      Modal.confirm({
+        title: '当前脚本尚未保存',
+        content: '切换后未保存内容会丢失，是否继续切换？',
+        okText: '继续切换',
+        cancelText: '取消',
+        onOk: () => {
+          setSelectedId(item.id);
+          onSelect(item);
+        },
+      });
+      return;
+    }
     setSelectedId(item.id);
     onSelect(item);
   };
@@ -61,27 +100,21 @@ const ScriptPageLayout: React.FC<ScriptPageLayoutProps> = ({
     onUpdate({ ...item, enabled: checked });
   };
 
-  const handleCodeChange = (code: string) => {
-    if (selectedItem) {
-      // Create a local update or propagate up? 
-      // Usually we want to edit in local state before saving.
-      // But for simplicity in this reusable component, we might need a way to track dirty state.
-      // For now, we assume parent handles updates or we pass a modified object to parent onSave.
-      // Let's assume onUpdate updates the state in parent immediately or we need local state.
-      // Better: Update parent state immediately for "draft" or have a separate draft state.
-      // To keep it simple and unified: Parent controls state.
-      onUpdate({ ...selectedItem, script: code });
-    }
+  const handleSave = () => {
+    if (!selectedItem) return;
+    const nextItem = { ...selectedItem, script: draftScript };
+    onUpdate(nextItem);
+    onSave(nextItem);
   };
 
   return (
     <Layout style={{ height: '100%', background: '#f5f5f5' }}>
-      <Sider 
-        width={300} 
-        style={{ 
-          background: '#fff', 
+      <Sider
+        width={300}
+        style={{
+          background: '#fff',
           borderRight: '1px solid #e8e8e8',
-          overflow: 'auto'
+          overflow: 'auto',
         }}
       >
         <div style={{ padding: '16px', borderBottom: '1px solid #f0f0f0' }}>
@@ -96,23 +129,23 @@ const ScriptPageLayout: React.FC<ScriptPageLayoutProps> = ({
           itemLayout="horizontal"
           dataSource={items}
           renderItem={item => (
-            <List.Item 
-              style={{ 
+            <List.Item
+              style={{
                 padding: '12px 16px',
                 cursor: 'pointer',
                 background: selectedId === item.id ? '#e6f7ff' : 'transparent',
                 borderLeft: selectedId === item.id ? '3px solid #1890ff' : '3px solid transparent',
-                transition: 'all 0.3s'
+                transition: 'all 0.3s',
               }}
               onClick={() => handleSelect(item)}
               actions={
                 showEnableSwitch
                   ? [
-                      <Switch 
-                        size="small" 
-                        checked={item.enabled} 
-                        onClick={(checked, e) => handleToggleEnable(item, checked, e)} 
-                      />
+                      <Switch
+                        size="small"
+                        checked={item.enabled}
+                        onClick={(checked, e) => handleToggleEnable(item, checked, e)}
+                      />,
                     ]
                   : undefined
               }
@@ -139,13 +172,13 @@ const ScriptPageLayout: React.FC<ScriptPageLayoutProps> = ({
                 okText="确定"
                 cancelText="取消"
               >
-                 <Button 
-                    type="text" 
-                    danger 
-                    icon={<DeleteOutlined />} 
-                    size="small" 
-                    onClick={(e) => e.stopPropagation()}
-                 />
+                <Button
+                  type="text"
+                  danger
+                  icon={<DeleteOutlined />}
+                  size="small"
+                  onClick={(e) => e.stopPropagation()}
+                />
               </Popconfirm>
             </List.Item>
           )}
@@ -159,22 +192,22 @@ const ScriptPageLayout: React.FC<ScriptPageLayoutProps> = ({
             extra={
               <Space>
                 {extraButtons}
-                <Button 
-                  type="primary" 
-                  icon={<SaveOutlined />} 
-                  onClick={() => onSave(selectedItem)}
+                <Button
+                  type="primary"
+                  icon={<SaveOutlined />}
+                  onClick={handleSave}
                 >
-                  保存脚本
+                  保存
                 </Button>
               </Space>
             }
             bodyStyle={{ padding: 0, flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}
             style={{ height: '100%', display: 'flex', flexDirection: 'column' }}
           >
-            <div style={{ flex: 1, overflow: 'hidden' }}>
+            <div style={{ flex: 1, minHeight: 0 }}>
               <CodeEditor
-                value={selectedItem.script}
-                onChange={handleCodeChange}
+                value={draftScript}
+                onChange={setDraftScript}
                 language="go"
                 theme="material"
                 height="100%"
@@ -183,16 +216,18 @@ const ScriptPageLayout: React.FC<ScriptPageLayoutProps> = ({
             {bottomPanel}
           </Card>
         ) : (
-          <div style={{ 
-            height: '100%', 
-            display: 'flex', 
-            justifyContent: 'center', 
-            alignItems: 'center',
-            background: '#fff',
-            borderRadius: 4,
-            border: '1px dashed #d9d9d9',
-            color: '#999'
-          }}>
+          <div
+            style={{
+              height: '100%',
+              display: 'flex',
+              justifyContent: 'center',
+              alignItems: 'center',
+              background: '#fff',
+              borderRadius: 4,
+              border: '1px dashed #d9d9d9',
+              color: '#999',
+            }}
+          >
             <Space direction="vertical" align="center">
               <FileTextOutlined style={{ fontSize: 48 }} />
               <span>{placeholder}</span>

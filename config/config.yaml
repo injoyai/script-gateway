@@ -1,0 +1,5 @@
+port: 8200
+
+database:
+  type: mysql
+  dsn: root:root@tcp(127.0.0.1:3306)/script-gateway?charset=utf8mb4&parseTime=True&loc=Local

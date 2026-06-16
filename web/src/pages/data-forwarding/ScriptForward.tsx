@@ -8,7 +8,6 @@ import {
   deletePushScript, 
   enablePushScript, 
   disablePushScript,
-  PushScript 
 } from '../../services/scriptApi';
 
 const ScriptForward: React.FC = () => {

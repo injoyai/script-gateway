@@ -221,3 +221,35 @@
   color: #6272a4;
 }
 
+/* 代码折叠样式 */
+.code-editor-container .CodeMirror-foldgutter {
+  width: 18px;
+}
+
+.code-editor-container .CodeMirror-foldgutter-open,
+.code-editor-container .CodeMirror-foldgutter-folded {
+  cursor: pointer;
+}
+
+.code-editor-container .CodeMirror-foldgutter-open:after {
+  content: '\25BE';
+  color: #858585;
+  font-size: 10px;
+}
+
+.code-editor-container .CodeMirror-foldgutter-folded:after {
+  content: '\25B8';
+  color: #858585;
+  font-size: 10px;
+}
+
+/* 选中文本样式 */
+.code-editor-container .CodeMirror-selected {
+  background: rgba(59, 130, 246, 0.3) !important;
+}
+
+/* 当前行高亮增强 */
+.code-editor-container .CodeMirror-activeline {
+  background: rgba(255, 255, 255, 0.03) !important;
+}
+

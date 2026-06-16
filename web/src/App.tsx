@@ -15,9 +15,14 @@ import SshClient from './pages/system/SshClient';
 import GlobalConfig from './pages/system/GlobalConfig';
 import HttpListener from './pages/data-listener/HttpListener';
 import MqttListener from './pages/data-listener/MqttListener';
+import TcpListener from './pages/data-listener/TcpListener';
+import UdpListener from './pages/data-listener/UdpListener';
+import SerialListener from './pages/data-listener/SerialListener';
 import ScriptListener from './pages/data-listener/ScriptListener';
 import DataParser from './pages/data-listener/DataParser';
 import DataMonitor from './pages/data-monitor/DataMonitor';
+import MessageQueue from './pages/data-monitor/MessageQueue';
+import ProcessorChainManager from './pages/unified/ProcessorChainManager';
 import useUserStore from './store/useUserStore';
 
 const App: React.FC = () => {
@@ -38,10 +43,17 @@ const App: React.FC = () => {
               <Route path="dashboard" element={<Dashboard />} />
               <Route path="data">
                 <Route path="monitor" element={<DataMonitor />} />
+                <Route path="queue" element={<MessageQueue />} />
+              </Route>
+              <Route path="unified">
+                <Route path="processor-chains" element={<ProcessorChainManager />} />
               </Route>
               <Route path="data-listener">
                 <Route path="http" element={<HttpListener />} />
                 <Route path="mqtt" element={<MqttListener />} />
+                <Route path="tcp" element={<TcpListener />} />
+                <Route path="udp" element={<UdpListener />} />
+                <Route path="serial" element={<SerialListener />} />
                 <Route path="script" element={<ScriptListener />} />
                 <Route path="parser" element={<DataParser />} />
               </Route>

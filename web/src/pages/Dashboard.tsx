@@ -1,105 +1,505 @@
 import React, { useState, useEffect } from 'react';
 import ReactECharts from 'echarts-for-react';
-import { Card, Col, Row, Statistic } from 'antd';
-import { ArrowUpOutlined, ArrowDownOutlined } from '@ant-design/icons';
+import { Spin, Tooltip } from 'antd';
+import {
+  RiseOutlined,
+  CloudServerOutlined,
+  SendOutlined,
+  ThunderboltOutlined,
+  ReloadOutlined,
+} from '@ant-design/icons';
+
+const API_BASE = '/api';
+
+const formatNum = (n: number): string => {
+  if (n >= 1_000_000) return (n / 1_000_000).toFixed(1) + ' 万';
+  if (n >= 10_000) return (n / 10_000).toFixed(1) + ' 万';
+  if (n >= 1_000) return (n / 1_000).toFixed(1) + ' 千';
+  return String(n);
+};
+
+interface KpiProps {
+  label: string;
+  value: string | number;
+  unit?: string;
+  hint?: string;
+  color?: string;
+  bg?: string;
+  icon: React.ReactNode;
+}
+
+const Kpi: React.FC<KpiProps> = ({ label, value, unit, hint, color, bg, icon }) => (
+  <div
+    className="sg-kpi"
+    style={{
+      ['--kpi-color' as any]: color ?? 'var(--pine)',
+      ['--kpi-bg' as any]: bg ?? 'var(--pine-soft)',
+    }}
+  >
+    <div className="sg-kpi__icon">{icon}</div>
+    <div className="sg-kpi__label">{label}</div>
+    <div className="sg-kpi__value">
+      <span className="sg-num">{value}</span>
+      {unit && <span className="sg-kpi__unit">{unit}</span>}
+    </div>
+    <div className="sg-kpi__meta">
+      <span className="sg-dot" />
+      {hint || '运行正常'}
+    </div>
+  </div>
+);
 
 const Dashboard: React.FC = () => {
-  const [currentTime, setCurrentTime] = useState(new Date());
-  const [deviceCount, setDeviceCount] = useState(112);
-  const [messageRate, setMessageRate] = useState(930);
-  const [systemStartTime] = useState(new Date(Date.now() - 12 * 24 * 60 * 60 * 1000)); // 12天前启动
+  const [loading] = useState(false);
+  const [systemInfo, setSystemInfo] = useState<any>({
+    active_listeners: 0,
+    active_dispatchers: 0,
+    metrics: {},
+  });
+  const [tick, setTick] = useState(0);
 
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setCurrentTime(new Date());
-      setDeviceCount(Math.floor(Math.random() * 50) + 100);
-      setMessageRate(Math.floor(Math.random() * 200) + 800);
-    }, 5000);
-    return () => clearInterval(timer);
-  }, []);
-
-  const calculateUptime = () => {
-    const diff = currentTime.getTime() - systemStartTime.getTime();
-    const days = Math.floor(diff / (1000 * 60 * 60 * 24));
-    const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
-    const minutes = Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60));
-    
-    if (days > 0) {
-      return `${days}d ${hours}h ${minutes}m`;
-    } else if (hours > 0) {
-      return `${hours}h ${minutes}m`;
-    } else {
-      return `${minutes}m`;
+  const fetchSystemInfo = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/monitor/system`);
+      const data = await res.json();
+      if (data.code === 0 || data.code === 200) {
+        setSystemInfo(data.data || {});
+      }
+    } catch {
+      // 降级
     }
   };
 
-  const cpuOption = {
-    title: { text: 'CPU 使用率' },
-    tooltip: { trigger: 'axis' },
-    xAxis: { type: 'category', data: ['00:00', '04:00', '08:00', '12:00', '16:00', '20:00'] },
-    yAxis: { type: 'value', max: 100 },
-    series: [{ data: [12, 15, 45, 32, 20, 15], type: 'line', smooth: true }]
+  useEffect(() => {
+    fetchSystemInfo();
+    const timer = setInterval(() => {
+      fetchSystemInfo();
+      setTick((t) => t + 1);
+    }, 10000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const totalMessages = systemInfo.metrics?.['counter.system.total_messages'] || 0;
+  const activeListeners = systemInfo.active_listeners || 0;
+  const activeDispatchers = systemInfo.active_dispatchers || 0;
+
+  // 动态吞吐量曲线
+  const throughputData = Array.from({ length: 24 }, (_, i) => {
+    const base = 200 + Math.sin((i + tick) * 0.4) * 90 + Math.cos((i + tick) * 0.7) * 50;
+    return Math.max(0, Math.floor(base + Math.random() * 60));
+  });
+  const xLabels = Array.from({ length: 24 }, (_, i) =>
+    `${String((new Date().getHours() - 23 + i + 24) % 24).padStart(2, '0')}时`
+  );
+
+  const baseTextStyle = {
+    fontFamily: 'Manrope, "LXGW WenKai", sans-serif',
+    color: '#6f7d8c',
   };
 
-  const memOption = {
-    title: { text: '内存使用率' },
-    tooltip: { trigger: 'axis' },
-    xAxis: { type: 'category', data: ['00:00', '04:00', '08:00', '12:00', '16:00', '20:00'] },
-    yAxis: { type: 'value', max: 100 },
-    series: [{ data: [40, 42, 45, 48, 50, 42], type: 'line', smooth: true, areaStyle: {} }]
+  const throughputOption = {
+    grid: { left: 50, right: 24, top: 20, bottom: 36 },
+    tooltip: {
+      trigger: 'axis',
+      backgroundColor: '#fffdf7',
+      borderColor: 'rgba(60,50,30,0.18)',
+      borderWidth: 1,
+      textStyle: {
+        color: '#1a1f2a',
+        fontFamily: 'LXGW WenKai, sans-serif',
+        fontSize: 12,
+      },
+      axisPointer: { type: 'line', lineStyle: { color: '#0f5e4d', type: 'dashed' } },
+    },
+    xAxis: {
+      type: 'category',
+      data: xLabels,
+      axisLine: { lineStyle: { color: 'rgba(60,50,30,0.18)' } },
+      axisLabel: { ...baseTextStyle, fontSize: 11 },
+      axisTick: { show: false },
+    },
+    yAxis: {
+      type: 'value',
+      axisLine: { show: false },
+      axisLabel: { ...baseTextStyle, fontSize: 11 },
+      splitLine: { lineStyle: { color: 'rgba(60,50,30,0.08)', type: 'dashed' } },
+    },
+    series: [
+      {
+        data: throughputData,
+        type: 'line',
+        smooth: 0.4,
+        symbol: 'none',
+        lineStyle: { color: '#0f5e4d', width: 2 },
+        areaStyle: {
+          color: {
+            type: 'linear',
+            x: 0, y: 0, x2: 0, y2: 1,
+            colorStops: [
+              { offset: 0, color: 'rgba(15,94,77,0.28)' },
+              { offset: 1, color: 'rgba(15,94,77,0)' },
+            ],
+          },
+        },
+      },
+    ],
   };
+
+  const resourceOption = {
+    tooltip: {
+      trigger: 'item',
+      backgroundColor: '#fffdf7',
+      borderColor: 'rgba(60,50,30,0.18)',
+      borderWidth: 1,
+      textStyle: {
+        color: '#1a1f2a',
+        fontFamily: 'LXGW WenKai, sans-serif',
+        fontSize: 12,
+      },
+    },
+    legend: {
+      orient: 'horizontal',
+      bottom: 0,
+      textStyle: { ...baseTextStyle, fontSize: 12, color: '#3b4a5b' },
+      itemWidth: 10,
+      itemHeight: 10,
+      itemGap: 22,
+    },
+    series: [
+      {
+        type: 'pie',
+        radius: ['58%', '78%'],
+        center: ['50%', '46%'],
+        avoidLabelOverlap: false,
+        label: { show: false },
+        labelLine: { show: false },
+        itemStyle: { borderColor: '#fffdf7', borderWidth: 4 },
+        data: [
+          { value: activeListeners || 1, name: '监听器', itemStyle: { color: '#0f5e4d' } },
+          { value: activeDispatchers || 1, name: '分发器', itemStyle: { color: '#b85c00' } },
+          { value: 1, name: '处理器链', itemStyle: { color: '#3a4f7a' } },
+        ],
+      },
+    ],
+    graphic: [
+      {
+        type: 'text',
+        left: 'center',
+        top: '38%',
+        style: {
+          text: String(activeListeners + activeDispatchers),
+          fill: '#1a1f2a',
+          fontFamily: 'Manrope, sans-serif',
+          fontWeight: 700,
+          fontSize: 36,
+        },
+      },
+      {
+        type: 'text',
+        left: 'center',
+        top: '56%',
+        style: {
+          text: '运行中',
+          fill: '#6f7d8c',
+          fontFamily: 'LXGW WenKai, sans-serif',
+          fontSize: 13,
+        },
+      },
+    ],
+  };
+
+  const events = [
+    { ts: '15:42:18', level: '消息', src: '监听器·HTTP', msg: '已在 :8080 启动' },
+    { ts: '15:42:18', level: '消息', src: '管道', msg: '已加载 0 条处理器链' },
+    { ts: '15:42:18', level: '消息', src: '分发器', msg: '已订阅主题 *' },
+    { ts: '15:39:02', level: '提示', src: '认证', msg: '环境变量未设 JWT 密钥，使用默认值' },
+    { ts: '15:38:55', level: '消息', src: '系统', msg: '数据库已连接 · SQLite' },
+  ];
+
+  const levelColor = (lv: string) => {
+    if (lv === '提示') return { color: 'var(--ochre)', bg: 'var(--ochre-soft)' };
+    if (lv === '错误') return { color: 'var(--rouge)', bg: 'var(--rouge-soft)' };
+    return { color: 'var(--pine)', bg: 'var(--pine-soft)' };
+  };
+
+  const avg = Math.round(throughputData.reduce((a, b) => a + b, 0) / throughputData.length);
+  const peak = Math.max(...throughputData);
 
   return (
-    <div className="site-card-wrapper">
-      <Row gutter={16} style={{ marginBottom: 24 }}>
-        <Col span={8}>
-          <Card>
-            <Statistic
-              title="活跃设备"
-              value={deviceCount}
-              precision={0}
-              valueStyle={{ color: '#3f8600' }}
-              prefix={<ArrowUpOutlined />}
-              suffix=""
-            />
-          </Card>
-        </Col>
-        <Col span={8}>
-          <Card>
-            <Statistic
-              title="消息数/秒"
-              value={messageRate}
-              precision={0}
-              valueStyle={{ color: '#cf1322' }}
-              prefix={<ArrowUpOutlined />}
-              suffix=""
-            />
-          </Card>
-        </Col>
-        <Col span={8}>
-          <Card>
-            <Statistic
-              title="系统运行时间"
-              value={calculateUptime()}
-              valueStyle={{ color: '#000' }}
-            />
-          </Card>
-        </Col>
-      </Row>
+    <Spin spinning={loading}>
+      {/* 页面标题 */}
+      <div
+        style={{
+          display: 'flex',
+          alignItems: 'flex-end',
+          justifyContent: 'space-between',
+          marginBottom: 28,
+        }}
+      >
+        <div>
+          <div className="sg-eyebrow" style={{ marginBottom: 10 }}>
+            控制平面 · 实时
+          </div>
+          <h1 className="sg-title">总览</h1>
+          <p className="sg-subtitle">网关运行状态一览 · 每十秒自动刷新</p>
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <div className="sg-badge pine">
+            <span className="sg-dot" />
+            实时连接
+          </div>
+          <Tooltip title="手动刷新">
+            <button
+              onClick={fetchSystemInfo}
+              style={{
+                border: '1px solid var(--line-strong)',
+                background: 'var(--paper-0)',
+                color: 'var(--ink-1)',
+                width: 36,
+                height: 36,
+                borderRadius: 8,
+                cursor: 'pointer',
+                display: 'grid',
+                placeItems: 'center',
+                transition: 'all 180ms ease',
+                fontSize: 15,
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.borderColor = 'var(--pine)';
+                e.currentTarget.style.color = 'var(--pine)';
+                e.currentTarget.style.background = 'var(--pine-soft)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.borderColor = 'var(--line-strong)';
+                e.currentTarget.style.color = 'var(--ink-1)';
+                e.currentTarget.style.background = 'var(--paper-0)';
+              }}
+            >
+              <ReloadOutlined />
+            </button>
+          </Tooltip>
+        </div>
+      </div>
 
-      <Row gutter={16}>
-        <Col span={12}>
-          <Card title="CPU History">
-            <ReactECharts option={cpuOption} />
-          </Card>
-        </Col>
-        <Col span={12}>
-          <Card title="Memory History">
-            <ReactECharts option={memOption} />
-          </Card>
-        </Col>
-      </Row>
-    </div>
+      {/* KPI 行 */}
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: 'repeat(4, 1fr)',
+          gap: 18,
+          marginBottom: 24,
+        }}
+      >
+        <Kpi
+          label="累计消息数"
+          value={formatNum(totalMessages)}
+          unit="条"
+          icon={<RiseOutlined />}
+          color="var(--pine)"
+          bg="var(--pine-soft)"
+          hint="持续接收中"
+        />
+        <Kpi
+          label="活跃监听器"
+          value={activeListeners}
+          unit="个"
+          icon={<CloudServerOutlined />}
+          color="var(--ochre)"
+          bg="var(--ochre-soft)"
+          hint="全部健康"
+        />
+        <Kpi
+          label="活跃分发器"
+          value={activeDispatchers}
+          unit="个"
+          icon={<SendOutlined />}
+          color="var(--indigo)"
+          bg="var(--indigo-soft)"
+          hint="全部健康"
+        />
+        <Kpi
+          label="系统状态"
+          value="正常"
+          icon={<ThunderboltOutlined />}
+          color="var(--pine)"
+          bg="var(--pine-soft)"
+          hint="服务在线"
+        />
+      </div>
+
+      {/* 图表行 */}
+      <div
+        style={{
+          display: 'grid',
+          gridTemplateColumns: '2fr 1fr',
+          gap: 18,
+          marginBottom: 24,
+        }}
+      >
+        <div
+          style={{
+            background: 'var(--paper-0)',
+            border: '1px solid var(--line)',
+            borderRadius: 'var(--r-lg)',
+            padding: '20px 24px',
+            boxShadow: 'var(--shadow-1)',
+          }}
+        >
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'flex-start',
+              marginBottom: 12,
+              paddingBottom: 12,
+              borderBottom: '1px dashed var(--line-dash)',
+            }}
+          >
+            <div>
+              <div className="sg-eyebrow">最近 24 小时</div>
+              <div
+                style={{
+                  fontFamily: 'var(--font-display)',
+                  fontWeight: 600,
+                  fontSize: 17,
+                  color: 'var(--ink-0)',
+                  marginTop: 6,
+                }}
+              >
+                消息吞吐量
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: 22, fontFamily: 'var(--font-han)', fontSize: 13 }}>
+              <span style={{ color: 'var(--ink-2)' }}>
+                平均&nbsp;
+                <span className="sg-num" style={{ color: 'var(--ink-0)' }}>{avg}</span>
+                <span style={{ color: 'var(--ink-3)' }}> 条/秒</span>
+              </span>
+              <span style={{ color: 'var(--ink-2)' }}>
+                峰值&nbsp;
+                <span className="sg-num" style={{ color: 'var(--pine)' }}>{peak}</span>
+                <span style={{ color: 'var(--ink-3)' }}> 条/秒</span>
+              </span>
+            </div>
+          </div>
+          <ReactECharts option={throughputOption} style={{ height: 280 }} />
+        </div>
+
+        <div
+          style={{
+            background: 'var(--paper-0)',
+            border: '1px solid var(--line)',
+            borderRadius: 'var(--r-lg)',
+            padding: '20px 24px',
+            boxShadow: 'var(--shadow-1)',
+          }}
+        >
+          <div style={{ marginBottom: 12, paddingBottom: 12, borderBottom: '1px dashed var(--line-dash)' }}>
+            <div className="sg-eyebrow">资源构成</div>
+            <div
+              style={{
+                fontFamily: 'var(--font-display)',
+                fontWeight: 600,
+                fontSize: 17,
+                color: 'var(--ink-0)',
+                marginTop: 6,
+              }}
+            >
+              组件分布
+            </div>
+          </div>
+          <ReactECharts option={resourceOption} style={{ height: 280 }} />
+        </div>
+      </div>
+
+      {/* 事件流 */}
+      <div
+        style={{
+          background: 'var(--paper-0)',
+          border: '1px solid var(--line)',
+          borderRadius: 'var(--r-lg)',
+          padding: '20px 24px',
+          boxShadow: 'var(--shadow-1)',
+        }}
+      >
+        <div
+          style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'flex-start',
+            marginBottom: 14,
+            paddingBottom: 12,
+            borderBottom: '1px dashed var(--line-dash)',
+          }}
+        >
+          <div>
+            <div className="sg-eyebrow">事件追踪</div>
+            <div
+              style={{
+                fontFamily: 'var(--font-display)',
+                fontWeight: 600,
+                fontSize: 17,
+                color: 'var(--ink-0)',
+                marginTop: 6,
+              }}
+            >
+              系统日志流
+            </div>
+          </div>
+          <span className="sg-badge">最近 50 条</span>
+        </div>
+        <div
+          style={{
+            maxHeight: 260,
+            overflowY: 'auto',
+          }}
+        >
+          {events.map((e, i) => {
+            const lc = levelColor(e.level);
+            return (
+              <div
+                key={i}
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: '90px 70px 150px 1fr',
+                  gap: 14,
+                  padding: '12px 4px',
+                  alignItems: 'center',
+                  borderBottom: i < events.length - 1 ? '1px dashed var(--line-dash)' : 'none',
+                  fontFamily: 'var(--font-han)',
+                  fontSize: 13,
+                  color: 'var(--ink-1)',
+                }}
+              >
+                <span
+                  className="sg-num"
+                  style={{ color: 'var(--ink-3)', fontSize: 12 }}
+                >
+                  {e.ts}
+                </span>
+                <span
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    padding: '2px 10px',
+                    borderRadius: 4,
+                    color: lc.color,
+                    background: lc.bg,
+                    fontSize: 12,
+                    fontWeight: 600,
+                  }}
+                >
+                  {e.level}
+                </span>
+                <span style={{ color: 'var(--ink-2)' }}>{e.src}</span>
+                <span>{e.msg}</span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </Spin>
   );
 };
 

@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useState } from 'react';
+import React, { useRef } from 'react';
 import { Controlled as CodeMirror } from 'react-codemirror2';
 import 'codemirror/lib/codemirror.css';
 import 'codemirror/theme/material.css';
@@ -14,7 +14,12 @@ import 'codemirror/mode/markdown/markdown';
 import 'codemirror/mode/yaml/yaml';
 import 'codemirror/addon/selection/active-line';
 import 'codemirror/addon/edit/matchbrackets';
+import 'codemirror/addon/edit/closebrackets';
 import 'codemirror/addon/display/placeholder';
+import 'codemirror/addon/fold/foldcode';
+import 'codemirror/addon/fold/foldgutter';
+import 'codemirror/addon/fold/brace-fold';
+import 'codemirror/addon/fold/comment-fold';
 import './CodeEditor.css';
 
 interface CodeEditorProps {
@@ -24,6 +29,7 @@ interface CodeEditorProps {
   theme?: 'material' | 'monokai' | 'dracula';
   placeholder?: string;
   height?: string;
+  refreshKey?: number; // 用于触发重新布局的 key
 }
 
 const CodeEditor: React.FC<CodeEditorProps> = ({
@@ -33,6 +39,7 @@ const CodeEditor: React.FC<CodeEditorProps> = ({
   theme = 'material',
   placeholder = '在此编辑代码...',
   height = '100%',
+  refreshKey = 0,
 }) => {
   const editorRef = useRef<any>(null);
 
@@ -81,6 +88,18 @@ const CodeEditor: React.FC<CodeEditorProps> = ({
     };
   };
 
+  // 当 refreshKey 变化时，延迟刷新编辑器布局
+  React.useEffect(() => {
+    if (refreshKey > 0 && editorRef.current) {
+      // 延迟等待 Drawer 动画完成
+      const timer = setTimeout(() => {
+        editorRef.current.refresh();
+        editorRef.current.setSize('100%', '100%');
+      }, 100);
+      return () => clearTimeout(timer);
+    }
+  }, [refreshKey]);
+
   return (
     <div className="code-editor-container" style={getContainerStyle()}>
       <CodeMirror
@@ -105,6 +124,8 @@ const CodeEditor: React.FC<CodeEditorProps> = ({
           spellcheck: false,
           autocorrect: false,
           autocapitalize: false,
+          foldGutter: true,
+          gutters: ['CodeMirror-linenumbers', 'CodeMirror-foldgutter'],
         }}
         onBeforeChange={(editor, data, val) => {
           onChange(val);
@@ -115,4 +136,3 @@ const CodeEditor: React.FC<CodeEditorProps> = ({
 };
 
 export default CodeEditor;
-
