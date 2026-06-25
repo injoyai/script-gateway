@@ -48,7 +48,7 @@ const BusynessBadge: React.FC<Props> = ({ data }) => {
         style={{
           position: 'absolute',
           top: -8,
-          right: -8,
+          left: -8,
           background: '#fff',
           border: `1.5px solid ${color}`,
           borderRadius: 10,

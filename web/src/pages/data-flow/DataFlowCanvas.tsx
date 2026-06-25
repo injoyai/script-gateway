@@ -456,6 +456,26 @@ const buildGraph = (data: FlowData, callbacks: {
     for (const vid of viewers) addEdgeSafe(mn.id, vid, mn.topic);
   }
 
+  // 根据节点 enable 状态区分连接线样式：任一端未启用则灰色虚线不动画
+  const enableMap = new Map<string, boolean>();
+  for (const n of nodes) {
+    const d = n.data as unknown as FlowNodeData;
+    if (d && typeof d.enable === 'boolean') {
+      enableMap.set(n.id, d.enable);
+    }
+  }
+  for (const e of edges) {
+    const srcOn = enableMap.get(e.source) ?? true;
+    const tgtOn = enableMap.get(e.target) ?? true;
+    if (srcOn && tgtOn) {
+      e.animated = true;
+      e.style = { stroke: '#b85c00', strokeWidth: 2 };
+    } else {
+      e.animated = false;
+      e.style = { stroke: '#d9d9d9', strokeWidth: 1, strokeDasharray: '4 3' };
+    }
+  }
+
   return { nodes, edges };
 };
 
@@ -1039,8 +1059,18 @@ const DataFlowCanvasInner: React.FC = () => {
         }
       }
       for (const e of es) {
-        e.animated = true;
-        e.style = { stroke: '#b85c00', strokeWidth: 2 };
+        // 恢复默认时仍按节点 enable 区分：任一端未启用则灰色虚线
+        const srcD = ns.find(n => n.id === e.source)?.data as unknown as FlowNodeData | undefined;
+        const tgtD = ns.find(n => n.id === e.target)?.data as unknown as FlowNodeData | undefined;
+        const srcOn = srcD?.enable ?? true;
+        const tgtOn = tgtD?.enable ?? true;
+        if (srcOn && tgtOn) {
+          e.animated = true;
+          e.style = { stroke: '#b85c00', strokeWidth: 2 };
+        } else {
+          e.animated = false;
+          e.style = { stroke: '#d9d9d9', strokeWidth: 1, strokeDasharray: '4 3' };
+        }
       }
     }
 
