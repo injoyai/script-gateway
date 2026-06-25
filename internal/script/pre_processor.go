@@ -1,10 +1,12 @@
 package script
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"time"
 
+	"github.com/injoyai/script-gateway/internal/plugin"
 	"github.com/injoyai/script-gateway/internal/types"
 )
 
@@ -121,3 +123,45 @@ func (p *PreProcessor) Process(msg *types.Message) (*types.Message, bool, error)
 		return msg, true, fmt.Errorf("pre_script timeout after %v", p.timeout)
 	}
 }
+
+// PluginPreProcessor 通过插件名包装 PreProcessor 行为
+type PluginPreProcessor struct {
+	name    string
+	params  map[string]any
+	timeout time.Duration
+}
+
+func NewPluginPreProcessor(pluginName string, params map[string]any) *PluginPreProcessor {
+	return &PluginPreProcessor{name: pluginName, params: params, timeout: 200 * time.Millisecond}
+}
+
+func (p *PluginPreProcessor) Process(msg *types.Message) (*types.Message, bool, error) {
+	if p == nil {
+		return msg, true, nil
+	}
+	plg, ok := plugin.Default.Get(plugin.TypeProcessor, p.name)
+	if !ok {
+		return msg, true, fmt.Errorf("processor plugin %q not found", p.name)
+	}
+	np, nt, nm, pass, err := plugin.InvokeProcess(context.Background(), plg, msg.Payload, msg.Topic, msg.Metadata, p.params, p.timeout)
+	if err != nil {
+		return msg, true, err
+	}
+	if !pass {
+		return nil, false, nil
+	}
+	out := &types.Message{ID: msg.ID, Payload: msg.Payload, Topic: msg.Topic, Metadata: msg.Metadata}
+	if np != nil {
+		out.Payload = np
+	}
+	if nt != "" {
+		out.Topic = nt
+	}
+	if nm != nil {
+		out.Metadata = nm
+	}
+	return out, true, nil
+}
+
+// _ ensure unused-mutex check
+var _ sync.Mutex

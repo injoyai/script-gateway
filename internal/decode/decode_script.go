@@ -1,10 +1,12 @@
 package decode
 
 import (
+	"context"
 	"fmt"
 	"sync"
 	"time"
 
+	"github.com/injoyai/script-gateway/internal/plugin"
 	"github.com/injoyai/script-gateway/internal/script"
 	"github.com/injoyai/script-gateway/internal/types"
 )
@@ -134,4 +136,46 @@ func (p *ScriptProcessor) Process(msg *types.Message) (*types.Message, error) {
 	case <-time.After(p.timeout):
 		return msg, fmt.Errorf("script processor timeout after %v", p.timeout)
 	}
+}
+
+// PluginProcessor 通过 processor 插件实现的处理器链节点
+type PluginProcessor struct {
+	PluginName string
+	Params     map[string]any
+	Timeout    time.Duration
+}
+
+func NewPluginProcessor(name string, params map[string]any) *PluginProcessor {
+	return &PluginProcessor{PluginName: name, Params: params, Timeout: 200 * time.Millisecond}
+}
+
+func (p *PluginProcessor) Key() string  { return "plugin:" + p.PluginName }
+func (p *PluginProcessor) Name() string { return "插件处理:" + p.PluginName }
+
+func (p *PluginProcessor) Process(msg *types.Message) (*types.Message, error) {
+	if p == nil || p.PluginName == "" {
+		return msg, nil
+	}
+	plg, ok := plugin.Default.Get(plugin.TypeProcessor, p.PluginName)
+	if !ok {
+		return msg, fmt.Errorf("processor plugin %q not found", p.PluginName)
+	}
+	np, nt, nm, pass, err := plugin.InvokeProcess(context.Background(), plg, msg.Payload, msg.Topic, msg.Metadata, p.Params, p.Timeout)
+	if err != nil {
+		return msg, err
+	}
+	if !pass {
+		return nil, nil
+	}
+	out := &types.Message{ID: msg.ID, Payload: msg.Payload, Topic: msg.Topic, Metadata: msg.Metadata}
+	if np != nil {
+		out.Payload = np
+	}
+	if nt != "" {
+		out.Topic = nt
+	}
+	if nm != nil {
+		out.Metadata = nm
+	}
+	return out, nil
 }

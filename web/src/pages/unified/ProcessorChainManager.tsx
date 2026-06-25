@@ -5,6 +5,7 @@ import {
   Empty,
   Form,
   Input,
+  InputNumber,
   List,
   Modal,
   Popconfirm,
@@ -27,6 +28,7 @@ import {
 } from '@ant-design/icons';
 import TopicLink from '../../components/TopicLink';
 import CodeEditor from '../../components/CodeEditor';
+import { listPluginsByType, type PluginInfo, type PluginParamSpec } from '../../services/pluginApi';
 
 const API_BASE = '/api';
 const SIMPLE_MODE = 'simple';
@@ -76,6 +78,8 @@ const SIMPLE_PROCESSOR_OPTIONS = [
   { value: 'dlt645', label: 'DLT645协议' },
   { value: 'modbus_rtu', label: 'Modbus RTU协议' },
   { value: 'script', label: '自定义脚本' },
+  { value: 'plugin', label: '插件处理器' },
+  { value: 'plugin_decoder', label: '插件解码器' },
 ];
 
 const createNodeId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -170,6 +174,10 @@ const buildSimpleProcessor = (values: Record<string, any>): ProcessorConfigItem[
       return [{ key: 'modbus_rtu', config: JSON.stringify({ topic: outTopic }) }];
     case 'script':
       return [{ key: 'script', config: JSON.stringify({ script: values.script || DEFAULT_PROCESS_SCRIPT, topic: outTopic }) }];
+    case 'plugin':
+      return [{ key: 'plugin', config: JSON.stringify({ plugin_name: values.plugin_name || '', params: values.plugin_params || {}, topic: outTopic }) }];
+    case 'plugin_decoder':
+      return [{ key: 'plugin_decoder', config: JSON.stringify({ plugin_name: values.plugin_name || '', params: values.plugin_params || {}, topic: outTopic }) }];
     default:
       return [];
   }
@@ -209,6 +217,8 @@ const fillFormValues = (record?: ProcessorItem | null) => {
     text_to: cfg.to || '',
     text_pattern: cfg.pattern || '',
     field_mapping: mappingToText(cfg.mapping),
+    plugin_name: cfg.plugin_name || '',
+    plugin_params: cfg.params || {},
   };
 };
 
@@ -224,16 +234,125 @@ const moveNode = (nodes: VisualProcessorNode[], index: number, direction: -1 | 1
   return next;
 };
 
+// 根据插件的 ParamSpec 动态渲染参数输入控件
+const renderPluginParamInput = (
+  spec: PluginParamSpec,
+  value: any,
+  onChange: (val: any) => void,
+) => {
+  const label = spec.label || spec.key;
+  const rules = spec.required ? [{ required: true, message: `请输入${label}` }] : [];
+  switch (spec.type) {
+    case 'int':
+    case 'number':
+    case 'float':
+      return (
+        <Form.Item key={spec.key} name={['plugin_params', spec.key]} label={label} rules={rules} tooltip={spec.description}>
+          <InputNumber
+            value={value}
+            min={spec.min !== undefined ? spec.min : undefined}
+            max={spec.max !== undefined ? spec.max : undefined}
+            onChange={onChange}
+            style={{ width: '100%' }}
+          />
+        </Form.Item>
+      );
+    case 'bool':
+      return (
+        <Form.Item key={spec.key} name={['plugin_params', spec.key]} label={label} rules={rules} tooltip={spec.description}>
+          <Switch checked={!!value} onChange={onChange} />
+        </Form.Item>
+      );
+    case 'select':
+      return (
+        <Form.Item key={spec.key} name={['plugin_params', spec.key]} label={label} rules={rules} tooltip={spec.description}>
+          <Select
+            value={value}
+            options={(spec.options || []).map(o => ({ value: o, label: o }))}
+            onChange={onChange}
+            allowClear
+          />
+        </Form.Item>
+      );
+    case 'string':
+    default:
+      return (
+        <Form.Item key={spec.key} name={['plugin_params', spec.key]} label={label} rules={rules} tooltip={spec.description}>
+          <Input value={value} onChange={(e) => onChange(e.target.value)} />
+        </Form.Item>
+      );
+  }
+};
+
+// 根据插件的 ParamSpec 动态渲染参数输入控件（高级模式，受控写法）
+const renderPluginParamInputControlled = (
+  spec: PluginParamSpec,
+  value: any,
+  onChange: (val: any) => void,
+) => {
+  const label = spec.label || spec.key;
+  switch (spec.type) {
+    case 'int':
+    case 'number':
+    case 'float':
+      return (
+        <Form.Item key={spec.key} label={label} style={{ marginBottom: 12 }} tooltip={spec.description}>
+          <InputNumber
+            value={value}
+            min={spec.min !== undefined ? spec.min : undefined}
+            max={spec.max !== undefined ? spec.max : undefined}
+            onChange={onChange}
+            style={{ width: '100%' }}
+          />
+        </Form.Item>
+      );
+    case 'bool':
+      return (
+        <Form.Item key={spec.key} label={label} style={{ marginBottom: 12 }} tooltip={spec.description}>
+          <Switch checked={!!value} onChange={onChange} />
+        </Form.Item>
+      );
+    case 'select':
+      return (
+        <Form.Item key={spec.key} label={label} style={{ marginBottom: 12 }} tooltip={spec.description}>
+          <Select
+            value={value}
+            options={(spec.options || []).map(o => ({ value: o, label: o }))}
+            onChange={onChange}
+            allowClear
+          />
+        </Form.Item>
+      );
+    case 'string':
+    default:
+      return (
+        <Form.Item key={spec.key} label={label} style={{ marginBottom: 12 }} tooltip={spec.description}>
+          <Input value={value} onChange={(e) => onChange(e.target.value)} />
+        </Form.Item>
+      );
+  }
+};
+
 const ProcessorChainManager: React.FC = () => {
   const [list, setList] = useState<ProcessorItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [saving, setSaving] = useState(false);
   const [advancedNodes, setAdvancedNodes] = useState<VisualProcessorNode[]>([]);
+  const [processorPlugins, setProcessorPlugins] = useState<PluginInfo[]>([]);
+  const [decoderPlugins, setDecoderPlugins] = useState<PluginInfo[]>([]);
   const [form] = Form.useForm();
 
   const selectedMode = Form.useWatch('mode', form);
   const selectedProcessorKey = Form.useWatch('processor_key', form);
+  const selectedPluginName = Form.useWatch('plugin_name', form);
+
+  // 当前选中的 processor/decoder 插件的参数定义
+  const currentPluginSpecs = useMemo(() => {
+    const pool = selectedProcessorKey === 'plugin_decoder' ? decoderPlugins : processorPlugins;
+    const p = pool.find(p => p.name === selectedPluginName);
+    return p?.params || [];
+  }, [processorPlugins, decoderPlugins, selectedProcessorKey, selectedPluginName]);
 
   const selectedItem = useMemo(
     () => list.find(item => item.id === selectedId) || null,
@@ -306,9 +425,37 @@ const ProcessorChainManager: React.FC = () => {
     }
   }, [applySelection, selectedId]);
 
+  // 获取 processor 类型插件列表
+  const fetchProcessorPlugins = useCallback(async () => {
+    try {
+      const data = await listPluginsByType('processor');
+      setProcessorPlugins(data || []);
+    } catch {
+      // 静默失败，不影响主流程
+    }
+  }, []);
+
+  // 获取 decoder 类型插件列表
+  const fetchDecoderPlugins = useCallback(async () => {
+    try {
+      const data = await listPluginsByType('decoder');
+      setDecoderPlugins(data || []);
+    } catch {
+      // 静默失败，不影响主流程
+    }
+  }, []);
+
   useEffect(() => {
     fetchList();
   }, [fetchList]);
+
+  useEffect(() => {
+    fetchProcessorPlugins();
+  }, [fetchProcessorPlugins]);
+
+  useEffect(() => {
+    fetchDecoderPlugins();
+  }, [fetchDecoderPlugins]);
 
   const handleSelect = (item: ProcessorItem) => {
     if (selectedId === item.id) return;
@@ -513,6 +660,66 @@ const ProcessorChainManager: React.FC = () => {
           </div>
         </Form.Item>
       )}
+
+      {selectedProcessorKey === 'plugin' && (
+        <>
+          <Form.Item name="plugin_name" label="插件" rules={[{ required: true, message: '请选择插件' }]}>
+            <Select
+              placeholder="选择处理器插件"
+              options={processorPlugins.map(p => ({
+                value: p.name,
+                label: p.display || p.name,
+              }))}
+              notFoundContent={processorPlugins.length === 0 ? '暂无已加载的 processor 插件' : undefined}
+            />
+          </Form.Item>
+          {currentPluginSpecs.length > 0 && (
+            <Card size="small" style={{ marginBottom: 16 }} title="插件参数">
+              {currentPluginSpecs.map(spec => {
+                const val = form.getFieldValue(['plugin_params', spec.key]) ?? spec.default;
+                return renderPluginParamInput(spec, val, (v) => {
+                  form.setFieldValue(['plugin_params', spec.key], v);
+                });
+              })}
+            </Card>
+          )}
+          {selectedPluginName && currentPluginSpecs.length === 0 && (
+            <Text type="secondary" style={{ display: 'block', marginBottom: 16 }}>
+              该插件没有可配置的参数
+            </Text>
+          )}
+        </>
+      )}
+
+      {selectedProcessorKey === 'plugin_decoder' && (
+        <>
+          <Form.Item name="plugin_name" label="插件" rules={[{ required: true, message: '请选择插件' }]}>
+            <Select
+              placeholder="选择解码器插件"
+              options={decoderPlugins.map(p => ({
+                value: p.name,
+                label: p.display || p.name,
+              }))}
+              notFoundContent={decoderPlugins.length === 0 ? '暂无已加载的 decoder 插件' : undefined}
+            />
+          </Form.Item>
+          {currentPluginSpecs.length > 0 && (
+            <Card size="small" style={{ marginBottom: 16 }} title="插件参数">
+              {currentPluginSpecs.map(spec => {
+                const val = form.getFieldValue(['plugin_params', spec.key]) ?? spec.default;
+                return renderPluginParamInput(spec, val, (v) => {
+                  form.setFieldValue(['plugin_params', spec.key], v);
+                });
+              })}
+            </Card>
+          )}
+          {selectedPluginName && currentPluginSpecs.length === 0 && (
+            <Text type="secondary" style={{ display: 'block', marginBottom: 16 }}>
+              该插件没有可配置的参数
+            </Text>
+          )}
+        </>
+      )}
     </>
   );
 
@@ -591,6 +798,68 @@ const ProcessorChainManager: React.FC = () => {
               height="320px"
             />
           </div>
+        )}
+
+        {node.key === 'plugin' && (
+          <>
+            <Form.Item label="插件" style={{ marginBottom: 12 }}>
+              <Select
+                value={cfg.plugin_name || ''}
+                placeholder="选择处理器插件"
+                options={processorPlugins.map(p => ({
+                  value: p.name,
+                  label: p.display || p.name,
+                }))}
+                onChange={(value) => setAdvancedNodes(prev => updateNodeAt(prev, index, item => ({ ...item, config: { plugin_name: value, params: {} } })))}
+                notFoundContent={processorPlugins.length === 0 ? '暂无已加载的 processor 插件' : undefined}
+              />
+            </Form.Item>
+            {(() => {
+              const plugin = processorPlugins.find(p => p.name === cfg.plugin_name);
+              const params = cfg.params || {};
+              if (!plugin || !plugin.params || plugin.params.length === 0) return null;
+              return plugin.params.map(spec => {
+                const val = params[spec.key] ?? spec.default;
+                return renderPluginParamInputControlled(spec, val, (v) => {
+                  setAdvancedNodes(prev => updateNodeAt(prev, index, item => ({
+                    ...item,
+                    config: { ...item.config, params: { ...(item.config.params || {}), [spec.key]: v } },
+                  })));
+                });
+              });
+            })()}
+          </>
+        )}
+
+        {node.key === 'plugin_decoder' && (
+          <>
+            <Form.Item label="插件" style={{ marginBottom: 12 }}>
+              <Select
+                value={cfg.plugin_name || ''}
+                placeholder="选择解码器插件"
+                options={decoderPlugins.map(p => ({
+                  value: p.name,
+                  label: p.display || p.name,
+                }))}
+                onChange={(value) => setAdvancedNodes(prev => updateNodeAt(prev, index, item => ({ ...item, config: { plugin_name: value, params: {} } })))}
+                notFoundContent={decoderPlugins.length === 0 ? '暂无已加载的 decoder 插件' : undefined}
+              />
+            </Form.Item>
+            {(() => {
+              const plugin = decoderPlugins.find(p => p.name === cfg.plugin_name);
+              const params = cfg.params || {};
+              if (!plugin || !plugin.params || plugin.params.length === 0) return null;
+              return plugin.params.map(spec => {
+                const val = params[spec.key] ?? spec.default;
+                return renderPluginParamInputControlled(spec, val, (v) => {
+                  setAdvancedNodes(prev => updateNodeAt(prev, index, item => ({
+                    ...item,
+                    config: { ...item.config, params: { ...(item.config.params || {}), [spec.key]: v } },
+                  })));
+                });
+              });
+            })()}
+          </>
         )}
 
         <Form.Item label="节点输出 Topic" style={{ marginBottom: 0 }}>
@@ -697,7 +966,7 @@ const ProcessorChainManager: React.FC = () => {
         style={{ flex: 1 }}
         extra={selectedItem ? (
           <Space>
-            <TopicLink topic={getOutputTopic(selectedProcessors)} color="blue" emptyText="沿用原 Topic" />
+            <TopicLink topic={form.getFieldValue('out_topic') || getOutputTopic(selectedProcessors)} color="blue" emptyText="沿用原 Topic" />
             <Button type="primary" icon={<EditOutlined />} loading={saving} onClick={handleSave}>保存</Button>
           </Space>
         ) : undefined}

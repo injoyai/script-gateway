@@ -3,9 +3,11 @@ package model
 import "github.com/injoyai/conv"
 
 type DecodeScript struct {
-	ID     int64  `xorm:"'id'"`
-	Name   string `xorm:"'name'"`
-	Script string `xorm:"'script'"`
+	ID           int64  `xorm:"'id'"`
+	Name         string `xorm:"'name'"`
+	Script       string `xorm:"'script'"`
+	PluginName   string `xorm:"'plugin_name'"`
+	PluginParams string `xorm:"'plugin_params'"`
 }
 
 func (DecodeScript) TableName() string {

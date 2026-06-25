@@ -19,20 +19,11 @@ func (User) TableName() string {
 
 // ListenerParent 监听父级资源（HTTP 服务端 / MQTT 客户端）
 type ListenerParent struct {
-	ID     int64  `json:"id" xorm:"'id' pk autoincr"`
-	Name   string `json:"name" xorm:"'name' notnull"`
-	Type   string `json:"type" xorm:"'type' notnull"` // http_server / mqtt_client
-	Enable bool   `json:"enable" xorm:"'enable'"`
-
-	// HTTP Server 配置
-	Port int `json:"port" xorm:"'port' int"` // HTTP 监听端口
-
-	// MQTT Client 配置
-	Broker   string `json:"broker" xorm:"'broker' varchar(200)"`       // MQTT Broker 地址
-	ClientID string `json:"client_id" xorm:"'client_id' varchar(100)"` // MQTT Client ID
-	Username string `json:"username" xorm:"'username' varchar(100)"`   // MQTT 用户名
-	Password string `json:"password" xorm:"'password' varchar(200)"`   // MQTT 密码
-
+	ID        int64     `json:"id" xorm:"'id' pk autoincr"`
+	Name      string    `json:"name" xorm:"'name' notnull"`
+	Type      string    `json:"type" xorm:"'type' notnull"` // http_server / mqtt_client
+	Enable    bool      `json:"enable" xorm:"'enable'"`
+	Config    string    `json:"config" xorm:"'config' text"` // JSON 配置，按 Type 区分结构
 	CreatedAt time.Time `json:"created_at" xorm:"'created_at' created"`
 	UpdatedAt time.Time `json:"updated_at" xorm:"'updated_at' updated"`
 }
@@ -43,36 +34,16 @@ func (ListenerParent) TableName() string {
 
 // ListenerConn 统一监听子连接 / 路由 / 订阅
 type ListenerConn struct {
-	ID        int64  `json:"id" xorm:"'id' pk autoincr"`
-	ParentID  int64  `json:"parent_id" xorm:"'parent_id' index"`
-	Name      string `json:"name" xorm:"'name' notnull"`
-	Type      string `json:"type" xorm:"'type' notnull"` // http_route / mqtt_subscription / tcp_conn / udp_conn / serial_conn / script_conn
-	Enable    bool   `json:"enable" xorm:"'enable'"`
-	Topic     string `json:"topic" xorm:"'topic'"`         // 入站 topic：连接收到的数据推送到此 topic
-	OutTopic  string `json:"out_topic" xorm:"'out_topic'"` // 出站 topic：订阅此 topic 的消息推送到连接
-	PreScript string `json:"pre_script" xorm:"'pre_script' text"`
-
-	// TCP/UDP 连接配置
-	Address string `json:"address" xorm:"'address' varchar(100)"` // TCP/UDP 监听地址，如 "0.0.0.0:9000"
-
-	// 串口配置
-	Port     string `json:"port" xorm:"'port' varchar(100)"`  // 串口设备路径，如 "COM3" 或 "/dev/ttyUSB0"
-	BaudRate int    `json:"baud_rate" xorm:"'baud_rate' int"` // 波特率，如 9600, 115200
-
-	// 脚本配置
-	Content string `json:"content" xorm:"'content' text"` // 脚本内容（Go 代码）
-
-	// HTTP 路由配置
-	Path    string `json:"path" xorm:"'path' varchar(200)"`       // HTTP 路由路径，如 "/api/data"
-	Methods string `json:"methods" xorm:"'methods' varchar(100)"` // 允许的 HTTP 方法，如 "POST,PUT"
-
-	// MQTT 订阅配置
-	SubTopic string `json:"sub_topic" xorm:"'sub_topic' varchar(200)"` // MQTT 订阅主题
-	QoS      byte   `json:"qos" xorm:"'qos' tinyint"`                  // MQTT QoS 级别
-
-	// 扩展配置（分帧规则等）
-	Extra string `json:"extra" xorm:"'extra' text"` // JSON 格式的扩展配置，如 framing 规则
-
+	ID        int64     `json:"id" xorm:"'id' pk autoincr"`
+	ParentID  int64     `json:"parent_id" xorm:"'parent_id' index"`
+	Name      string    `json:"name" xorm:"'name' notnull"`
+	Type      string    `json:"type" xorm:"'type' notnull"` // tcp_conn / udp_conn / serial_conn / script_conn / http_route / mqtt_subscription
+	Enable    bool      `json:"enable" xorm:"'enable'"`
+	Topic     string    `json:"topic" xorm:"'topic'"`         // 入站 topic：连接收到的数据推送到此 topic
+	OutTopic  string    `json:"out_topic" xorm:"'out_topic'"` // 出站 topic：订阅此 topic 的消息推送到连接
+	PreScript string    `json:"pre_script" xorm:"'pre_script' text"`
+	Config    string    `json:"config" xorm:"'config' text"` // JSON 配置，按 Type 区分结构
+	Extra     string    `json:"extra" xorm:"'extra' text"`   // JSON 扩展配置（分帧规则等）
 	CreatedAt time.Time `json:"created_at" xorm:"'created_at' created"`
 	UpdatedAt time.Time `json:"updated_at" xorm:"'updated_at' updated"`
 }
@@ -101,7 +72,8 @@ func (DispatcherConfig) TableName() string {
 type ProcessorChain struct {
 	ID         int64     `json:"id" xorm:"'id' pk autoincr"`
 	Name       string    `json:"name" xorm:"'name' notnull"`
-	Topic      string    `json:"topic" xorm:"'topic'"`
+	Topic      string    `json:"topic" xorm:"'topic'"`         // 订阅 topic
+	OutTopic   string    `json:"out_topic" xorm:"'out_topic'"` // 发布 topic
 	Processors string    `json:"processors" xorm:"'processors' text"`
 	Enable     bool      `json:"enable" xorm:"'enable'"`
 	CreatedAt  time.Time `json:"created_at" xorm:"'created_at' created"`
@@ -110,6 +82,36 @@ type ProcessorChain struct {
 
 func (ProcessorChain) TableName() string {
 	return "processor_chain"
+}
+
+// Viewer 订阅查看器模型（订阅 topic，点击查看实时数据）
+type Viewer struct {
+	ID        int64     `json:"id" xorm:"'id' pk autoincr"`
+	Name      string    `json:"name" xorm:"'name' notnull"`
+	Topics    string    `json:"topics" xorm:"'topics' text"` // JSON 数组，订阅的 topic 列表
+	Enable    bool      `json:"enable" xorm:"'enable'"`
+	CreatedAt time.Time `json:"created_at" xorm:"'created_at' created"`
+	UpdatedAt time.Time `json:"updated_at" xorm:"'updated_at' updated"`
+}
+
+func (Viewer) TableName() string {
+	return "viewer"
+}
+
+// Mocker 虚拟数据发送器（向指定 topic 注入数据，支持手动触发与定时）
+type Mocker struct {
+	ID        int64     `json:"id" xorm:"'id' pk autoincr"`
+	Name      string    `json:"name" xorm:"'name' notnull"`
+	Topic     string    `json:"topic" xorm:"'topic'"`          // 目标 topic
+	Payload   string    `json:"payload" xorm:"'payload' text"` // 数据内容（原样发送）
+	Interval  int       `json:"interval" xorm:"'interval'"`    // 定时间隔（毫秒，0=不定时）
+	Enable    bool      `json:"enable" xorm:"'enable'"`
+	CreatedAt time.Time `json:"created_at" xorm:"'created_at' created"`
+	UpdatedAt time.Time `json:"updated_at" xorm:"'updated_at' updated"`
+}
+
+func (Mocker) TableName() string {
+	return "mocker"
 }
 
 // OperationLog 操作日志模型
@@ -163,9 +165,15 @@ func AllTables() []any {
 		new(ListenerConn),
 		new(DispatcherConfig),
 		new(ProcessorChain),
+		new(Viewer),
+		new(Mocker),
 		new(OperationLog),
 		new(ConfigSnapshot),
 		new(Metric),
 		new(Script),
+		new(DecodeScript),
+		new(PushScript),
+		new(TaskPluginConfig),
+		new(FlowLayout),
 	}
 }

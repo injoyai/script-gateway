@@ -1,9 +1,10 @@
-import React, { useState, useEffect } from 'react';
-import { Table, Button, Modal, Form, Input, Select, Switch, Space, Tag, message, Popconfirm } from 'antd';
+import React, { useState, useEffect, useCallback } from 'react';
+import { Table, Button, Modal, Form, Input, InputNumber, Select, Switch, Space, Tag, message, Popconfirm } from 'antd';
 import { PlusOutlined, ReloadOutlined, CodeOutlined } from '@ant-design/icons';
 import TopicLink from '../../components/TopicLink';
 import useScriptEditorStore from '../../store/useScriptEditorStore';
 import ScriptFormField from '../../components/ScriptFormField';
+import { listPluginsByType, type PluginInfo, type PluginParamSpec } from '../../services/pluginApi';
 
 const API_BASE = '/api';
 
@@ -13,6 +14,7 @@ const DISPATCHER_TYPES = [
   { value: 'script', label: '脚本' },
   { value: 'websocket', label: 'WebSocket' },
   { value: 'rocketmq', label: 'RocketMQ' },
+  { value: 'plugin', label: '插件' },
 ];
 
 const DispatcherManager: React.FC = () => {
@@ -22,6 +24,26 @@ const DispatcherManager: React.FC = () => {
   const [editItem, setEditItem] = useState<any>(null);
   const [form] = Form.useForm();
   const openScriptEditor = useScriptEditorStore((s) => s.openEditor);
+  const [pusherPlugins, setPusherPlugins] = useState<PluginInfo[]>([]);
+
+  const selectedType = Form.useWatch('type', form);
+  const selectedPluginName = Form.useWatch('plugin_name', form);
+
+  const currentPluginSpecs: PluginParamSpec[] = (() => {
+    const p = pusherPlugins.find(p => p.name === selectedPluginName);
+    return p?.params || [];
+  })();
+
+  const fetchPusherPlugins = useCallback(async () => {
+    try {
+      const data = await listPluginsByType('pusher');
+      setPusherPlugins(data || []);
+    } catch {
+      // 静默失败
+    }
+  }, []);
+
+  useEffect(() => { fetchPusherPlugins(); }, [fetchPusherPlugins]);
 
   const fetchList = async () => {
     setLoading(true);
@@ -116,8 +138,7 @@ const DispatcherManager: React.FC = () => {
   };
 
   const renderConfigFields = () => {
-    const type = form.getFieldValue('type');
-    switch (type) {
+    switch (selectedType) {
       case 'http':
         return (
           <>
@@ -147,6 +168,59 @@ const DispatcherManager: React.FC = () => {
         );
       case 'websocket':
         return <Form.Item name="address" label="地址" rules={[{ required: true }]}><Input placeholder="ws://127.0.0.1:8080/ws" /></Form.Item>;
+      case 'plugin':
+        return (
+          <>
+            <Form.Item name="plugin_name" label="插件" rules={[{ required: true, message: '请选择插件' }]}>
+              <Select
+                placeholder="选择推送插件"
+                options={pusherPlugins.map(p => ({ value: p.name, label: p.display || p.name }))}
+                notFoundContent={pusherPlugins.length === 0 ? '暂无已加载的 pusher 插件' : undefined}
+              />
+            </Form.Item>
+            {currentPluginSpecs.length > 0 && (
+              <>
+                <div style={{ marginBottom: 8, fontSize: 12, color: '#888' }}>插件参数</div>
+                {currentPluginSpecs.map(spec => {
+                  const label = spec.label || spec.key;
+                  const rules = spec.required ? [{ required: true, message: `请输入${label}` }] : [];
+                  switch (spec.type) {
+                    case 'int':
+                    case 'number':
+                    case 'float':
+                      return (
+                        <Form.Item key={spec.key} name={['params', spec.key]} label={label} rules={rules} tooltip={spec.description}>
+                          <InputNumber min={spec.min !== undefined ? spec.min : undefined} max={spec.max !== undefined ? spec.max : undefined} style={{ width: '100%' }} />
+                        </Form.Item>
+                      );
+                    case 'bool':
+                      return (
+                        <Form.Item key={spec.key} name={['params', spec.key]} label={label} rules={rules} tooltip={spec.description} valuePropName="checked">
+                          <Switch />
+                        </Form.Item>
+                      );
+                    case 'select':
+                      return (
+                        <Form.Item key={spec.key} name={['params', spec.key]} label={label} rules={rules} tooltip={spec.description}>
+                          <Select options={(spec.options || []).map(o => ({ value: o, label: o }))} allowClear />
+                        </Form.Item>
+                      );
+                    case 'string':
+                    default:
+                      return (
+                        <Form.Item key={spec.key} name={['params', spec.key]} label={label} rules={rules} tooltip={spec.description}>
+                          <Input />
+                        </Form.Item>
+                      );
+                  }
+                })}
+              </>
+            )}
+            {selectedPluginName && currentPluginSpecs.length === 0 && (
+              <div style={{ color: '#888', fontSize: 12 }}>该插件没有可配置的参数</div>
+            )}
+          </>
+        );
       default:
         return null;
     }

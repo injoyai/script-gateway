@@ -18,6 +18,8 @@ import {
   LineChartOutlined,
   CloudServerOutlined,
   FileTextOutlined,
+  PartitionOutlined,
+  AppstoreOutlined,
 } from '@ant-design/icons';
 import { Layout, Menu, Dropdown, Button, Tooltip, Modal, Input, message } from 'antd';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
@@ -43,6 +45,8 @@ const cnSeg = (seg: string) => {
     queue: '消息队列',
     unified: '统一管理',
     'processor-chains': '脚本处理',
+    'data-flow': '数据流可视化',
+    dispatchers: '分发器管理',
     'data-listener': '数据监听',
     http: 'HTTP',
     mqtt: 'MQTT',
@@ -64,6 +68,7 @@ const cnSeg = (seg: string) => {
     system: '系统',
     ssh: 'SSH 客户端',
     config: '全局配置',
+    plugins: '插件管理',
   };
   return map[seg] || seg;
 };
@@ -334,7 +339,9 @@ const MainLayout: React.FC = () => {
               </div>
             )}
             <Menu theme="light" selectedKeys={[location.pathname]} mode="inline" onClick={handleMenuClick}>
+              <Menu.Item key="/unified/data-flow" icon={<PartitionOutlined />}>数据流可视化</Menu.Item>
               <Menu.Item key="/unified/processor-chains" icon={<ApiOutlined />}>脚本处理</Menu.Item>
+              <Menu.Item key="/unified/dispatchers" icon={<SendOutlined />}>分发器管理</Menu.Item>
             </Menu>
 
             {!collapsed && (
@@ -399,6 +406,7 @@ const MainLayout: React.FC = () => {
             )}
             <Menu theme="light" selectedKeys={[location.pathname]} mode="inline" onClick={handleMenuClick}>
               <Menu.Item key="/system/ssh" icon={<CodeOutlined />}>SSH 客户端</Menu.Item>
+              <Menu.Item key="/system/plugins" icon={<AppstoreOutlined />}>插件管理</Menu.Item>
               <Menu.Item key="/system/config" icon={<SettingOutlined />}>全局配置</Menu.Item>
             </Menu>
           </div>

@@ -62,6 +62,7 @@ func All() []*Info {
 		{Key: "modbus_rtu", Name: "Modbus RTU协议"},
 		{Key: "modbus_tcp", Name: "Modbus TCP协议"},
 		{Key: "script", Name: "自定义脚本"},
+		{Key: "plugin", Name: "插件处理器"},
 		{Key: "pass", Name: "忽略"},
 	}
 }

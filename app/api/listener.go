@@ -2,6 +2,8 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
+	"slices"
 
 	"github.com/injoyai/frame/fbr"
 	"github.com/injoyai/script-gateway/app/common"
@@ -18,26 +20,29 @@ func (*ListenerParent) List(c fbr.Ctx) {
 		c.Fail(err)
 		return
 	}
-	// 附加运行时错误信息
+	// 附加运行时错误信息 + 展开平铺字段（兼容前端）
 	parentErrs := pipeline.Default.ParentErrors()
 	running := pipeline.Default.RunningParents()
 	type parentResp struct {
-		model.ListenerParent
+		model.ParentFlatView
 		ErrorInfo string `json:"error_info"`
 		Running   bool   `json:"running"`
 	}
 	resp := make([]parentResp, len(list))
 	for i, item := range list {
-		resp[i] = parentResp{ListenerParent: *item, ErrorInfo: parentErrs[item.ID], Running: running[item.ID]}
+		resp[i] = parentResp{ParentFlatView: item.FlatView(), ErrorInfo: parentErrs[item.ID], Running: running[item.ID]}
 	}
 	c.Succ(resp)
 }
 
 func (*ListenerParent) Create(c fbr.Ctx) {
-	data := new(model.ListenerParent)
-	c.Parse(data)
-	if data.Name == "" || data.Type == "" {
-		c.Fail("名称和类型不能为空")
+	data, err := model.NormalizeParent(c.Body())
+	if err != nil {
+		c.Fail(err)
+		return
+	}
+	if err := validateParent(data); err != nil {
+		c.Fail(err.Error())
 		return
 	}
 	if _, err := common.DB.InsertOne(data); err != nil {
@@ -50,14 +55,21 @@ func (*ListenerParent) Create(c fbr.Ctx) {
 			return
 		}
 	}
-	c.Succ(data)
+	c.Succ(data.FlatView())
 }
 
 func (*ListenerParent) Update(c fbr.Ctx) {
-	data := new(model.ListenerParent)
-	c.Parse(data)
+	data, err := model.NormalizeParent(c.Body())
+	if err != nil {
+		c.Fail(err)
+		return
+	}
 	if data.ID == 0 {
 		c.Fail("ID不能为空")
+		return
+	}
+	if err := validateParent(data); err != nil {
+		c.Fail(err.Error())
 		return
 	}
 	if _, err := common.DB.ID(data.ID).AllCols().Update(data); err != nil {
@@ -71,7 +83,7 @@ func (*ListenerParent) Update(c fbr.Ctx) {
 			return
 		}
 	}
-	c.Succ(data)
+	c.Succ(data.FlatView())
 }
 
 func (*ListenerParent) Enable(c fbr.Ctx) {
@@ -119,70 +131,47 @@ func (*ListenerParent) Delete(c fbr.Ctx) {
 	c.Succ(true)
 }
 
+// validateParent 校验父级监听器参数
+func validateParent(data *model.ListenerParent) error {
+	if data.Name == "" {
+		return fmt.Errorf("名称不能为空")
+	}
+	if data.Type == "" {
+		return fmt.Errorf("类型不能为空")
+	}
+	if !slices.Contains(model.ValidParentTypes, data.Type) {
+		return fmt.Errorf("不支持的父级类型: %s，可选: %v", data.Type, model.ValidParentTypes)
+	}
+	if data.Config == "" {
+		return fmt.Errorf("配置(config)不能为空")
+	}
+	// 按类型校验 Config
+	switch data.Type {
+	case model.ParentTypeHTTPServer:
+		var cfg model.ParentHTTPConfig
+		if err := json.Unmarshal([]byte(data.Config), &cfg); err != nil {
+			return fmt.Errorf("配置格式错误: %w", err)
+		}
+		if cfg.Port <= 0 || cfg.Port > 65535 {
+			return fmt.Errorf("端口必须在 1-65535 之间")
+		}
+	case model.ParentTypeMQTTClient:
+		var cfg model.ParentMQTTConfig
+		if err := json.Unmarshal([]byte(data.Config), &cfg); err != nil {
+			return fmt.Errorf("配置格式错误: %w", err)
+		}
+		if cfg.Broker == "" {
+			return fmt.Errorf("broker 地址不能为空")
+		}
+		if cfg.ClientID == "" {
+			return fmt.Errorf("client_id 不能为空")
+		}
+	}
+	return nil
+}
+
 // ListenerConn 监听子项 API
 type ListenerConn struct{}
-
-type listenerConnPayload struct {
-	ID        int64  `json:"id"`
-	ParentID  int64  `json:"parent_id"`
-	Name      string `json:"name"`
-	Type      string `json:"type"`
-	Enable    bool   `json:"enable"`
-	Topic     string `json:"topic"`
-	OutTopic  string `json:"out_topic"`
-	PreScript string `json:"pre_script"`
-
-	// TCP/UDP
-	Address string `json:"address"`
-
-	// Serial
-	Port     string `json:"port"`
-	BaudRate int    `json:"baud_rate"`
-
-	// Script
-	Content string `json:"content"`
-
-	// HTTP Route
-	Path    string `json:"path"`
-	Methods string `json:"methods"`
-
-	// MQTT Subscription
-	SubTopic string `json:"sub_topic"`
-	QoS      byte   `json:"qos"`
-
-	// Extra
-	Extra string `json:"extra"`
-}
-
-func (p *listenerConnPayload) ToModel() *model.ListenerConn {
-	return &model.ListenerConn{
-		ID:        p.ID,
-		ParentID:  p.ParentID,
-		Name:      p.Name,
-		Type:      p.Type,
-		Enable:    p.Enable,
-		Topic:     p.Topic,
-		OutTopic:  p.OutTopic,
-		PreScript: p.PreScript,
-		Address:   p.Address,
-		Port:      p.Port,
-		BaudRate:  p.BaudRate,
-		Content:   p.Content,
-		Path:      p.Path,
-		Methods:   p.Methods,
-		SubTopic:  p.SubTopic,
-		QoS:       p.QoS,
-		Extra:     p.Extra,
-	}
-}
-
-func parseListenerConnPayload(c fbr.Ctx) (*model.ListenerConn, error) {
-	payload := new(listenerConnPayload)
-	if err := json.Unmarshal(c.Body(), payload); err != nil {
-		return nil, err
-	}
-	return payload.ToModel(), nil
-}
 
 func (*ListenerConn) List(c fbr.Ctx) {
 	var list []*model.ListenerConn
@@ -197,29 +186,29 @@ func (*ListenerConn) List(c fbr.Ctx) {
 		c.Fail(err)
 		return
 	}
-	// 附加运行时错误信息
+	// 附加运行时错误信息 + 展开平铺字段（兼容前端）
 	connErrs := pipeline.Default.ConnErrors()
 	running := pipeline.Default.RunningConns()
 	type connResp struct {
-		model.ListenerConn
+		model.ConnFlatView
 		ErrorInfo string `json:"error_info"`
 		Running   bool   `json:"running"`
 	}
 	resp := make([]connResp, len(list))
 	for i, item := range list {
-		resp[i] = connResp{ListenerConn: *item, ErrorInfo: connErrs[item.ID], Running: running[item.ID]}
+		resp[i] = connResp{ConnFlatView: item.FlatView(), ErrorInfo: connErrs[item.ID], Running: running[item.ID]}
 	}
 	c.Succ(resp)
 }
 
 func (*ListenerConn) Create(c fbr.Ctx) {
-	data, err := parseListenerConnPayload(c)
+	data, err := model.NormalizeConn(c.Body())
 	if err != nil {
 		c.Fail(err)
 		return
 	}
-	if data.Name == "" || data.Type == "" {
-		c.Fail("名称和类型不能为空")
+	if err := validateConn(data); err != nil {
+		c.Fail(err.Error())
 		return
 	}
 	if _, err := common.DB.InsertOne(data); err != nil {
@@ -232,17 +221,21 @@ func (*ListenerConn) Create(c fbr.Ctx) {
 			return
 		}
 	}
-	c.Succ(data)
+	c.Succ(data.FlatView())
 }
 
 func (*ListenerConn) Update(c fbr.Ctx) {
-	data, err := parseListenerConnPayload(c)
+	data, err := model.NormalizeConn(c.Body())
 	if err != nil {
 		c.Fail(err)
 		return
 	}
 	if data.ID == 0 {
 		c.Fail("ID不能为空")
+		return
+	}
+	if err := validateConn(data); err != nil {
+		c.Fail(err.Error())
 		return
 	}
 	if _, err := common.DB.ID(data.ID).AllCols().Update(data); err != nil {
@@ -256,7 +249,7 @@ func (*ListenerConn) Update(c fbr.Ctx) {
 			return
 		}
 	}
-	c.Succ(data)
+	c.Succ(data.FlatView())
 }
 
 func (*ListenerConn) Enable(c fbr.Ctx) {
@@ -301,4 +294,70 @@ func (*ListenerConn) Delete(c fbr.Ctx) {
 		return
 	}
 	c.Succ(true)
+}
+
+// validateConn 校验子连接参数
+func validateConn(data *model.ListenerConn) error {
+	if data.Name == "" {
+		return fmt.Errorf("名称不能为空")
+	}
+	if data.Type == "" {
+		return fmt.Errorf("类型不能为空")
+	}
+	if !slices.Contains(model.ValidConnTypes, data.Type) {
+		return fmt.Errorf("不支持的连接类型: %s，可选: %v", data.Type, model.ValidConnTypes)
+	}
+	if data.Config == "" {
+		return fmt.Errorf("配置(config)不能为空")
+	}
+	// 按类型校验 Config
+	switch data.Type {
+	case model.ConnTypeTCP, model.ConnTypeUDP:
+		var cfg model.TCPConnConfig
+		if err := json.Unmarshal([]byte(data.Config), &cfg); err != nil {
+			return fmt.Errorf("配置格式错误: %w", err)
+		}
+		if cfg.Address == "" {
+			return fmt.Errorf("监听地址(address)不能为空")
+		}
+	case model.ConnTypeSerial:
+		var cfg model.SerialConnConfig
+		if err := json.Unmarshal([]byte(data.Config), &cfg); err != nil {
+			return fmt.Errorf("配置格式错误: %w", err)
+		}
+		if cfg.Port == "" {
+			return fmt.Errorf("串口端口(port)不能为空")
+		}
+		if cfg.BaudRate <= 0 {
+			return fmt.Errorf("波特率(baud_rate)必须大于0")
+		}
+	case model.ConnTypeScript:
+		var cfg model.ScriptConnConfig
+		if err := json.Unmarshal([]byte(data.Config), &cfg); err != nil {
+			return fmt.Errorf("配置格式错误: %w", err)
+		}
+		if cfg.Content == "" {
+			return fmt.Errorf("脚本内容(content)不能为空")
+		}
+	case model.ConnTypeHTTPRoute:
+		var cfg model.HTTPRouteConfig
+		if err := json.Unmarshal([]byte(data.Config), &cfg); err != nil {
+			return fmt.Errorf("配置格式错误: %w", err)
+		}
+		if cfg.Path == "" {
+			return fmt.Errorf("路由路径(path)不能为空")
+		}
+	case model.ConnTypeMQTTSub:
+		var cfg model.MQTTSubConfig
+		if err := json.Unmarshal([]byte(data.Config), &cfg); err != nil {
+			return fmt.Errorf("配置格式错误: %w", err)
+		}
+		if cfg.SubTopic == "" {
+			return fmt.Errorf("订阅主题(sub_topic)不能为空")
+		}
+		if cfg.QoS > 2 {
+			return fmt.Errorf("QoS 必须 0/1/2")
+		}
+	}
+	return nil
 }
