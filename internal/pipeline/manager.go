@@ -20,6 +20,7 @@ import (
 	"github.com/injoyai/script-gateway/internal/auth"
 	"github.com/injoyai/script-gateway/internal/decode"
 	"github.com/injoyai/script-gateway/internal/listen"
+	"github.com/injoyai/script-gateway/internal/plugin"
 	"github.com/injoyai/script-gateway/internal/push"
 	"github.com/injoyai/script-gateway/internal/queue"
 	"github.com/injoyai/script-gateway/internal/script"
@@ -68,6 +69,8 @@ type Manager struct {
 	framing      map[int64]*framingState
 	parentErrors map[int64]string
 	connErrors   map[int64]string
+	taskCancels  map[string]context.CancelFunc
+	taskErrors   map[string]string
 }
 
 var Default = &Manager{
@@ -80,6 +83,8 @@ var Default = &Manager{
 	framing:      make(map[int64]*framingState),
 	parentErrors: make(map[int64]string),
 	connErrors:   make(map[int64]string),
+	taskCancels:  make(map[string]context.CancelFunc),
+	taskErrors:   make(map[string]string),
 }
 
 // Queue 返回内部消息队列实例
@@ -198,6 +203,7 @@ func (m *Manager) Start() error {
 	m.startPipelines()
 	m.startParents()
 	m.startConns()
+	m.startTaskPlugins()
 	return nil
 }
 
@@ -259,14 +265,17 @@ func (m *Manager) StartParent(cfg *model.ListenerParent) error {
 	m.setParentError(cfg.ID, nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	rt := &parentRuntime{parent: cfg, cancel: cancel, httpRoutes: make(map[int64]*httpRouteRuntime), mqttTopics: make(map[int64]string)}
+	// 解析 Config JSON
 	switch cfg.Type {
-	case "http_server":
-		addr := fmt.Sprintf(":%d", cfg.Port)
+	case model.ParentTypeHTTPServer:
+		var pc model.ParentHTTPConfig
+		_ = json.Unmarshal([]byte(cfg.Config), &pc)
+		addr := fmt.Sprintf(":%d", pc.Port)
 		// 先同步绑定端口，捕获端口占用等错误
 		ln, err := net.Listen("tcp", addr)
 		if err != nil {
 			cancel()
-			m.setParentError(cfg.ID, fmt.Errorf("监听端口 %d 失败: %v", cfg.Port, err))
+			m.setParentError(cfg.ID, fmt.Errorf("监听端口 %d 失败: %v", pc.Port, err))
 			logs.Errf("HTTP parent %s listen %s failed: %v", cfg.Name, addr, err)
 			return err
 		}
@@ -302,8 +311,10 @@ func (m *Manager) StartParent(cfg *model.ListenerParent) error {
 			}
 		}()
 		go func() { <-ctx.Done(); _ = server.Shutdown(context.Background()) }()
-	case "mqtt_client":
-		opts := mqtt.NewClientOptions().AddBroker(cfg.Broker).SetClientID(cfg.ClientID).SetUsername(cfg.Username).SetPassword(cfg.Password).SetAutoReconnect(true)
+	case model.ParentTypeMQTTClient:
+		var mc model.ParentMQTTConfig
+		_ = json.Unmarshal([]byte(cfg.Config), &mc)
+		opts := mqtt.NewClientOptions().AddBroker(mc.Broker).SetClientID(mc.ClientID).SetUsername(mc.Username).SetPassword(mc.Password).SetAutoReconnect(true)
 		client := mqtt.NewClient(opts)
 		if token := client.Connect(); token.Wait() && token.Error() != nil {
 			cancel()
@@ -325,7 +336,9 @@ func (m *Manager) StartParent(cfg *model.ListenerParent) error {
 func (m *Manager) matchHTTPRouteLocked(rt *parentRuntime, r *http.Request) *httpRouteRuntime {
 	var fallback *httpRouteRuntime
 	for _, route := range rt.httpRoutes {
-		if route.cfg.Path == r.URL.Path && (route.cfg.Methods == "" || strings.Contains(strings.ToUpper(route.cfg.Methods), r.Method)) {
+		var rc model.HTTPRouteConfig
+		_ = json.Unmarshal([]byte(route.cfg.Config), &rc)
+		if rc.Path == r.URL.Path && (rc.Methods == "" || strings.Contains(strings.ToUpper(rc.Methods), r.Method)) {
 			// 优先匹配有 topic 的路由
 			if route.cfg.Topic != "" {
 				return route
@@ -437,7 +450,13 @@ func (m *Manager) runStandaloneConnLocked(cfg *model.ListenerConn, l listen.List
 
 	// 订阅出站 topic，将消息写入连接（带独立缓冲队列，避免连接慢拖累主队列）
 	if cfg.OutTopic != "" {
-		ch := m.queue.SubscribeWithBuffer([]string{cfg.OutTopic}, outboundBuffer)
+		sub, ch := m.queue.SubscribeNamed([]string{cfg.OutTopic}, queue.SubOpts{
+			Name:      "listener#" + cfg.Name,
+			OwnerType: "listener",
+			OwnerID:   cfg.ID,
+			Buffer:    outboundBuffer,
+		})
+		_ = sub
 		go m.writeToConn(cfg, ch, l, ctx)
 	}
 	m.listeners[cfg.ID] = l
@@ -494,18 +513,20 @@ func (m *Manager) startConnWithParentLocked(parent *parentRuntime, cfg *model.Li
 	ctx, cancel := context.WithCancel(context.Background())
 	m.cancels[cfg.ID] = cancel
 	switch cfg.Type {
-	case "http_route":
+	case model.ConnTypeHTTPRoute:
 		if parent.httpServer == nil {
 			delete(m.cancels, cfg.ID)
 			return fmt.Errorf("http parent not ready")
 		}
 		parent.httpRoutes[cfg.ID] = &httpRouteRuntime{cfg: cfg, pre: pre}
-	case "mqtt_subscription":
+	case model.ConnTypeMQTTSub:
+		var mc model.MQTTSubConfig
+		_ = json.Unmarshal([]byte(cfg.Config), &mc)
 		if parent.mqttClient == nil {
 			delete(m.cancels, cfg.ID)
 			return fmt.Errorf("mqtt parent not ready")
 		}
-		token := parent.mqttClient.Subscribe(cfg.SubTopic, cfg.QoS, func(_ mqtt.Client, msg mqtt.Message) {
+		token := parent.mqttClient.Subscribe(mc.SubTopic, mc.QoS, func(_ mqtt.Client, msg mqtt.Message) {
 			m2 := types.NewMessage(msg.Payload(), cfg.Topic)
 			if m2.Topic == "" {
 				m2.Topic = fmt.Sprintf("mqtt.%s.%d", cfg.Name, cfg.ID)
@@ -518,10 +539,16 @@ func (m *Manager) startConnWithParentLocked(parent *parentRuntime, cfg *model.Li
 			delete(m.cancels, cfg.ID)
 			return token.Error()
 		}
-		parent.mqttTopics[cfg.ID] = cfg.SubTopic
+		parent.mqttTopics[cfg.ID] = mc.SubTopic
 		// 订阅出站 topic，通过 MQTT 客户端发布
 		if cfg.OutTopic != "" {
-			outCh := m.queue.SubscribeWithBuffer([]string{cfg.OutTopic}, outboundBuffer)
+			outSub, outCh := m.queue.SubscribeNamed([]string{cfg.OutTopic}, queue.SubOpts{
+				Name:      "listener#" + cfg.Name,
+				OwnerType: "listener",
+				OwnerID:   cfg.ID,
+				Buffer:    outboundBuffer,
+			})
+			_ = outSub
 			go func(client mqtt.Client, ch <-chan *types.Message, ctx context.Context) {
 				for {
 					select {
@@ -531,13 +558,13 @@ func (m *Manager) startConnWithParentLocked(parent *parentRuntime, cfg *model.Li
 						if !ok {
 							return
 						}
-						token := client.Publish(cfg.SubTopic, cfg.QoS, false, msg.Payload)
+						token := client.Publish(mc.SubTopic, mc.QoS, false, msg.Payload)
 						token.Wait()
 					}
 				}
 			}(parent.mqttClient, outCh, ctx)
 		}
-	case "script_conn":
+	case model.ConnTypeScript:
 		l, err := createConnListener(cfg)
 		if err != nil {
 			delete(m.cancels, cfg.ID)
@@ -565,7 +592,13 @@ func (m *Manager) startConnWithParentLocked(parent *parentRuntime, cfg *model.Li
 			}
 		}()
 		if cfg.OutTopic != "" {
-			outCh := m.queue.SubscribeWithBuffer([]string{cfg.OutTopic}, outboundBuffer)
+			outSub, outCh := m.queue.SubscribeNamed([]string{cfg.OutTopic}, queue.SubOpts{
+				Name:      "listener#" + cfg.Name,
+				OwnerType: "listener",
+				OwnerID:   cfg.ID,
+				Buffer:    outboundBuffer,
+			})
+			_ = outSub
 			go m.writeToConn(cfg, outCh, l, ctx)
 		}
 		m.listeners[cfg.ID] = l
@@ -664,7 +697,11 @@ func (m *Manager) StartDispatcher(cfg *model.DispatcherConfig) error {
 	}
 	topics := d.Topics()
 	if len(topics) > 0 {
-		ch := m.queue.Subscribe(topics)
+		_, ch := m.queue.SubscribeNamed(topics, queue.SubOpts{
+			Name:      "dispatcher#" + cfg.Name,
+			OwnerType: "dispatcher",
+			OwnerID:   cfg.ID,
+		})
 		go func(ch <-chan *types.Message, d push.Dispatcher) {
 			for msg := range ch {
 				if err := d.Push(msg); err != nil {
@@ -707,8 +744,96 @@ func (m *Manager) StopAll() {
 		}
 		delete(m.parents, id)
 	}
+	for name, cancel := range m.taskCancels {
+		cancel()
+		delete(m.taskCancels, name)
+	}
 	m.pipelines = make(map[int64]*decode.Pipeline)
 	m.framing = make(map[int64]*framingState)
+	m.taskErrors = make(map[string]string)
+}
+
+// startTaskPlugins 启动所有已加载的 task 类型插件
+func (m *Manager) startTaskPlugins() {
+	var configs []*model.TaskPluginConfig
+	_ = common.DB.Where("enable = ?", true).Find(&configs)
+	configMap := map[string]*model.TaskPluginConfig{}
+	for _, c := range configs {
+		configMap[c.Name] = c
+	}
+	for _, p := range plugin.Default.List(plugin.TypeTask) {
+		var params map[string]any
+		if cfg, ok := configMap[p.Manifest.Name]; ok && cfg.Params != "" {
+			_ = json.Unmarshal([]byte(cfg.Params), &params)
+		}
+		if err := m.StartTaskPlugin(p.Manifest.Name, params); err != nil {
+			logs.Err(fmt.Sprintf("Start task plugin %s error: %v", p.Manifest.Name, err))
+		}
+	}
+}
+
+// StartTaskPlugin 启动单个 task 插件
+func (m *Manager) StartTaskPlugin(name string, params map[string]any) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.taskCancels[name]; ok {
+		return fmt.Errorf("task plugin %s already running", name)
+	}
+	p, ok := plugin.Default.Get(plugin.TypeTask, name)
+	if !ok {
+		return fmt.Errorf("task plugin %q not found", name)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	m.taskCancels[name] = cancel
+	delete(m.taskErrors, name)
+	go func() {
+		err := plugin.RunTask(ctx, p, params)
+		m.mu.Lock()
+		if err != nil && ctx.Err() == nil {
+			m.taskErrors[name] = err.Error()
+			logs.Err(fmt.Sprintf("Task plugin %s exited with error: %v", name, err))
+		}
+		delete(m.taskCancels, name)
+		m.mu.Unlock()
+	}()
+	return nil
+}
+
+// StopTaskPlugin 停止单个 task 插件
+func (m *Manager) StopTaskPlugin(name string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if cancel, ok := m.taskCancels[name]; ok {
+		cancel()
+		delete(m.taskCancels, name)
+	}
+	delete(m.taskErrors, name)
+}
+
+// TaskPluginError 返回指定 task 插件的最近错误
+func (m *Manager) TaskPluginError(name string) string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.taskErrors[name]
+}
+
+// IsTaskPluginRunning task 插件是否运行中
+func (m *Manager) IsTaskPluginRunning(name string) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	_, ok := m.taskCancels[name]
+	return ok
+}
+
+// RunningTaskPlugins 所有运行中的 task 插件名
+func (m *Manager) RunningTaskPlugins() []string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make([]string, 0, len(m.taskCancels))
+	for name := range m.taskCancels {
+		out = append(out, name)
+	}
+	return out
 }
 
 func (m *Manager) StartPipeline(cfg *model.ProcessorChain) error {
@@ -722,17 +847,24 @@ func (m *Manager) StartPipeline(cfg *model.ProcessorChain) error {
 		return err
 	}
 	if cfg.Topic != "" {
-		ch := m.queue.Subscribe([]string{cfg.Topic})
-		go func(ch <-chan *types.Message, p *decode.Pipeline, q *queue.Queue) {
+		_, ch := m.queue.SubscribeNamed([]string{cfg.Topic}, queue.SubOpts{
+			Name:      "chain#" + cfg.Name,
+			OwnerType: "chain",
+			OwnerID:   cfg.ID,
+		})
+		go func(ch <-chan *types.Message, p *decode.Pipeline, q *queue.Queue, outTopic string) {
 			for msg := range ch {
 				result, err := p.Process(msg)
 				if err != nil {
 					logs.Err(fmt.Sprintf("Pipeline process error: %v", err))
 					continue
 				}
+				if outTopic != "" && result.Topic == msg.Topic {
+					result.Topic = outTopic
+				}
 				q.Publish(result)
 			}
-		}(ch, p, m.queue)
+		}(ch, p, m.queue, cfg.OutTopic)
 	}
 	m.pipelines[cfg.ID] = p
 	return nil
@@ -746,14 +878,22 @@ func (m *Manager) StopPipeline(id int64) {
 
 func createConnListener(cfg *model.ListenerConn) (listen.Listener, error) {
 	switch cfg.Type {
-	case "tcp_conn":
-		return listen.NewTCP(cfg.Address, cfg.Topic), nil
-	case "udp_conn":
-		return listen.NewUDP(cfg.Address, cfg.Topic), nil
-	case "serial_conn":
-		return listen.NewSerial(cfg.Port, cfg.BaudRate, cfg.Topic), nil
-	case "script_conn":
-		return listen.NewScriptListener(cfg.Content, cfg.Topic), nil
+	case model.ConnTypeTCP:
+		var c model.TCPConnConfig
+		_ = json.Unmarshal([]byte(cfg.Config), &c)
+		return listen.NewTCP(c.Address, cfg.Topic), nil
+	case model.ConnTypeUDP:
+		var c model.TCPConnConfig
+		_ = json.Unmarshal([]byte(cfg.Config), &c)
+		return listen.NewUDP(c.Address, cfg.Topic), nil
+	case model.ConnTypeSerial:
+		var c model.SerialConnConfig
+		_ = json.Unmarshal([]byte(cfg.Config), &c)
+		return listen.NewSerial(c.Port, c.BaudRate, cfg.Topic), nil
+	case model.ConnTypeScript:
+		var c model.ScriptConnConfig
+		_ = json.Unmarshal([]byte(cfg.Config), &c)
+		return listen.NewScriptListener(c.Content, cfg.Topic), nil
 	default:
 		return nil, fmt.Errorf("unsupported conn type: %s", cfg.Type)
 	}
@@ -763,7 +903,7 @@ func createDispatcher(cfg *model.DispatcherConfig) (push.Dispatcher, error) {
 	var topics []string
 	json.Unmarshal([]byte(cfg.Topics), &topics)
 	switch cfg.Type {
-	case "http":
+	case model.DispatcherTypeHTTP:
 		var c struct {
 			URL    string            `json:"url"`
 			Method string            `json:"method"`
@@ -773,7 +913,7 @@ func createDispatcher(cfg *model.DispatcherConfig) (push.Dispatcher, error) {
 		d := push.NewHTTPDispatcher(c.URL, c.Method, topics)
 		d.Header = c.Header
 		return d, nil
-	case "mqtt":
+	case model.DispatcherTypeMQTT:
 		var c struct {
 			Broker   string `json:"broker"`
 			ClientID string `json:"client_id"`
@@ -784,16 +924,26 @@ func createDispatcher(cfg *model.DispatcherConfig) (push.Dispatcher, error) {
 		}
 		json.Unmarshal([]byte(cfg.Config), &c)
 		return push.NewMQTTDispatcher(c.Broker, c.ClientID, c.Username, c.Password, c.PubTopic, c.QoS, topics)
-	case "script":
+	case model.DispatcherTypeScript:
 		return push.NewScriptDispatcher(cfg.Config, topics)
-	case "websocket":
+	case model.DispatcherTypeWebsocket:
 		var c struct {
 			Address string `json:"address"`
 		}
 		json.Unmarshal([]byte(cfg.Config), &c)
 		return push.NewWebsocketDispatcher(c.Address, topics), nil
-	case "rocketmq":
+	case model.DispatcherTypeRocketMQ:
 		return push.NewRocketMQDispatcher(topics), nil
+	case model.DispatcherTypePlugin:
+		var c struct {
+			PluginName string         `json:"plugin_name"`
+			Params     map[string]any `json:"params"`
+		}
+		json.Unmarshal([]byte(cfg.Config), &c)
+		if c.PluginName == "" {
+			return nil, fmt.Errorf("plugin_name 不能为空")
+		}
+		return push.NewPluginPusher(c.PluginName, c.Params, topics), nil
 	default:
 		return nil, fmt.Errorf("unsupported dispatcher type: %s", cfg.Type)
 	}
@@ -867,6 +1017,24 @@ func createPipeline(cfg *model.ProcessorChain) (*decode.Pipeline, error) {
 			}
 			_ = json.Unmarshal([]byte(p.Config), &c)
 			processors = append(processors, decode.NewScriptProcessor(c.Script, c.Topic))
+		case "plugin":
+			var c struct {
+				PluginName string         `json:"plugin_name"`
+				Params     map[string]any `json:"params"`
+			}
+			_ = json.Unmarshal([]byte(p.Config), &c)
+			if c.PluginName != "" {
+				processors = append(processors, decode.NewPluginProcessor(c.PluginName, c.Params))
+			}
+		case "plugin_decoder":
+			var c struct {
+				PluginName string         `json:"plugin_name"`
+				Params     map[string]any `json:"params"`
+			}
+			_ = json.Unmarshal([]byte(p.Config), &c)
+			if c.PluginName != "" {
+				processors = append(processors, decode.NewPluginDecoder(c.PluginName, c.Params))
+			}
 		default:
 			logs.Warn(fmt.Sprintf("Unknown processor key: %s", p.Key))
 		}
