@@ -1,7 +1,10 @@
 package queue
 
 import (
+	"crypto/rand"
+	"strconv"
 	"sync"
+	"time"
 
 	"github.com/injoyai/script-gateway/internal/types"
 )
@@ -63,10 +66,13 @@ func (r *ringBuffer) Recent(n int) []*types.Message {
 // Queue 是基于 topic 的消息队列
 type Queue struct {
 	mu        sync.RWMutex
-	channels  map[string][]chan *types.Message // topic -> subscriber channels
-	snapshots map[string]*ringBuffer           // topic -> 最近消息快照
-	buffer    int                              // channel buffer size
-	snapSize  int                              // 每个topic快照保留的消息数
+	snapshots map[string]*ringBuffer // topic -> 最近消息快照
+	buffer    int                    // channel buffer size
+	snapSize  int                    // 每个topic快照保留的消息数
+
+	subscribers map[string]*Subscriber            // id -> sub
+	topicSubs   map[string]map[string]*Subscriber // topic -> subID -> sub
+	stopTick    chan struct{}
 }
 
 // New 创建新队列
@@ -74,35 +80,27 @@ func New(buffer int) *Queue {
 	if buffer <= 0 {
 		buffer = 1000
 	}
-	return &Queue{
-		channels:  make(map[string][]chan *types.Message),
-		snapshots: make(map[string]*ringBuffer),
-		buffer:    buffer,
-		snapSize:  100,
+	q := &Queue{
+		snapshots:   make(map[string]*ringBuffer),
+		buffer:      buffer,
+		snapSize:    100,
+		subscribers: make(map[string]*Subscriber),
+		topicSubs:   make(map[string]map[string]*Subscriber),
+		stopTick:    make(chan struct{}),
 	}
+	go q.tickBuckets()
+	return q
 }
 
-// Subscribe 订阅 topic，返回消息 channel
+// Subscribe deprecated: 请使用 SubscribeNamed
 func (q *Queue) Subscribe(topics []string) <-chan *types.Message {
-	return q.SubscribeWithBuffer(topics, 0)
+	_, ch := q.SubscribeNamed(topics, SubOpts{OwnerType: "legacy"})
+	return ch
 }
 
-// SubscribeWithBuffer 订阅 topic，可指定该订阅 channel 的缓冲大小（<=0 时使用 Queue 默认值）
+// SubscribeWithBuffer deprecated: 请使用 SubscribeNamed
 func (q *Queue) SubscribeWithBuffer(topics []string, buffer int) <-chan *types.Message {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-
-	if buffer <= 0 {
-		buffer = q.buffer
-	}
-	ch := make(chan *types.Message, buffer)
-	for _, topic := range topics {
-		q.channels[topic] = append(q.channels[topic], ch)
-		// 确保快照缓冲区存在
-		if _, ok := q.snapshots[topic]; !ok {
-			q.snapshots[topic] = newRingBuffer(q.snapSize)
-		}
-	}
+	_, ch := q.SubscribeNamed(topics, SubOpts{OwnerType: "legacy", Buffer: buffer})
 	return ch
 }
 
@@ -117,14 +115,19 @@ func (q *Queue) Publish(msg *types.Message) {
 	}
 	q.snapshots[topic].Push(msg)
 
-	subs := q.channels[topic]
+	// 收集该 topic 的所有订阅者快照
+	subs := make([]*Subscriber, 0, len(q.topicSubs[topic]))
+	for _, s := range q.topicSubs[topic] {
+		subs = append(subs, s)
+	}
 	q.mu.Unlock()
 
-	for _, ch := range subs {
+	for _, s := range subs {
 		select {
-		case ch <- msg:
+		case s.ch <- msg:
+			s.recordEnqueue()
 		default:
-			// 队列满则丢弃，避免阻塞
+			s.recordDrop()
 		}
 	}
 }
@@ -141,20 +144,11 @@ func (q *Queue) RegisterTopic(topic string) {
 	}
 }
 
-// Unsubscribe 取消订阅
+// Unsubscribe deprecated: 请使用 UnsubscribeSub
+// 旧 API 无法精确反查 Subscriber，迁移后所有调用点都用 UnsubscribeSub，此处为空实现保留签名兼容
 func (q *Queue) Unsubscribe(topics []string, ch <-chan *types.Message) {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-
-	for _, topic := range topics {
-		subs := q.channels[topic]
-		for i, s := range subs {
-			if s == ch {
-				q.channels[topic] = append(subs[:i], subs[i+1:]...)
-				break
-			}
-		}
-	}
+	_ = topics
+	_ = ch
 }
 
 // Topics 返回所有活跃 topic
@@ -162,8 +156,8 @@ func (q *Queue) Topics() []string {
 	q.mu.RLock()
 	defer q.mu.RUnlock()
 
-	topics := make([]string, 0, len(q.channels))
-	for t := range q.channels {
+	topics := make([]string, 0, len(q.topicSubs))
+	for t := range q.topicSubs {
 		topics = append(topics, t)
 	}
 	return topics
@@ -174,14 +168,13 @@ func (q *Queue) TopicsWithDepth() []TopicInfo {
 	q.mu.RLock()
 	defer q.mu.RUnlock()
 
-	// 合并 channels 和 snapshots 中的 topic
 	seen := make(map[string]bool)
-	result := make([]TopicInfo, 0, len(q.channels)+len(q.snapshots))
+	result := make([]TopicInfo, 0, len(q.topicSubs)+len(q.snapshots))
 
-	for topic, subs := range q.channels {
+	for topic, subs := range q.topicSubs {
 		depth := 0
-		for _, ch := range subs {
-			depth += len(ch)
+		for _, s := range subs {
+			depth += len(s.ch)
 		}
 		result = append(result, TopicInfo{
 			Name:        topic,
@@ -208,8 +201,8 @@ func (q *Queue) Depth(topic string) int {
 	defer q.mu.RUnlock()
 
 	total := 0
-	for _, ch := range q.channels[topic] {
-		total += len(ch)
+	for _, s := range q.topicSubs[topic] {
+		total += len(s.ch)
 	}
 	return total
 }
@@ -224,4 +217,99 @@ func (q *Queue) RecentMessages(topic string, n int) []*types.Message {
 		return nil
 	}
 	return snap.Recent(n)
+}
+
+// tickBuckets 每秒推进所有订阅者的滑动窗口桶
+func (q *Queue) tickBuckets() {
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+	var idx int64
+	for {
+		select {
+		case <-q.stopTick:
+			return
+		case <-ticker.C:
+			idx++
+			q.mu.RLock()
+			subs := make([]*Subscriber, 0, len(q.subscribers))
+			for _, s := range q.subscribers {
+				subs = append(subs, s)
+			}
+			q.mu.RUnlock()
+			for _, s := range subs {
+				s.advanceBucket(idx)
+			}
+		}
+	}
+}
+
+// SubscribeNamed 带身份的订阅
+func (q *Queue) SubscribeNamed(topics []string, opts SubOpts) (*Subscriber, <-chan *types.Message) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	buf := opts.Buffer
+	if buf <= 0 {
+		buf = q.buffer
+	}
+	ch := make(chan *types.Message, buf)
+	id := opts.Name + "-" + strconv.FormatInt(time.Now().UnixNano(), 36) + "-" + strconv.FormatUint(uint64(randUint32()), 36)
+	sub := &Subscriber{
+		ID:        id,
+		Name:      opts.Name,
+		OwnerType: opts.OwnerType,
+		OwnerID:   opts.OwnerID,
+		Topics:    append([]string(nil), topics...),
+		Cap:       buf,
+		Ch:        ch,
+		ch:        ch,
+		CreatedAt: time.Now(),
+	}
+	q.subscribers[id] = sub
+	for _, t := range topics {
+		if q.topicSubs[t] == nil {
+			q.topicSubs[t] = make(map[string]*Subscriber)
+		}
+		q.topicSubs[t][id] = sub
+		if _, ok := q.snapshots[t]; !ok {
+			q.snapshots[t] = newRingBuffer(q.snapSize)
+		}
+	}
+	return sub, ch
+}
+
+// UnsubscribeSub 移除订阅者并关闭 channel
+func (q *Queue) UnsubscribeSub(sub *Subscriber) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	delete(q.subscribers, sub.ID)
+	for _, t := range sub.Topics {
+		if subs, ok := q.topicSubs[t]; ok {
+			delete(subs, sub.ID)
+			if len(subs) == 0 {
+				delete(q.topicSubs, t)
+			}
+		}
+	}
+	close(sub.ch)
+}
+
+// Subscribers 返回所有订阅者的统计快照
+func (q *Queue) Subscribers() []Stats {
+	q.mu.RLock()
+	defer q.mu.RUnlock()
+	out := make([]Stats, 0, len(q.subscribers))
+	for _, s := range q.subscribers {
+		out = append(out, s.Stats())
+	}
+	return out
+}
+
+// randUint32 生成随机数用于订阅者 ID
+func randUint32() uint32 {
+	var b [4]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return uint32(time.Now().UnixNano())
+	}
+	return uint32(b[0]) | uint32(b[1])<<8 | uint32(b[2])<<16 | uint32(b[3])<<24
 }
