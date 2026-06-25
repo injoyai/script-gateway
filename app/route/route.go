@@ -20,21 +20,20 @@ func Run(port int) error {
 		g.Group("/listener-conn", fbr.WithStruct(&api.ListenerConn{}))
 		g.Group("/dispatcher", fbr.WithStruct(&api.Dispatcher{}))
 		g.Group("/processor_chain", fbr.WithStruct(&api.ProcessorChain{}))
-
-		g.Group("/listen", func(g fbr.Grouper) {
-			g.Group("/http", fbr.WithStruct(&api.ListenHTTP{}))
-		})
+		g.Group("/viewer", fbr.WithStruct(&api.Viewer{}))
+		g.Group("/mocker", fbr.WithStruct(&api.Mocker{}))
+		g.Group("/flow-layout", fbr.WithStruct(&api.FlowLayout{}))
 
 		g.Group("/decode", fbr.WithStruct(&api.Decode{}))
-		g.Group("/push", func(g fbr.Grouper) {
-			g.Group("/http", fbr.WithStruct(&api.PushHTTP{}))
-		})
 
 		g.Group("/audit", fbr.WithStruct(&api.OperationLog{}))
 		g.Group("/monitor", fbr.WithStruct(&api.Monitor{}))
 		g.Group("/queue", fbr.WithStruct(&api.Queue{}))
+		g.Group("/metrics", fbr.WithStruct(&api.Metrics{}))
 		g.Group("/snapshot", fbr.WithStruct(&api.ConfigSnapshot{}))
 		g.Group("/hotreload", fbr.WithStruct(&api.ScriptHotReload{}))
+		g.Group("/plugin", fbr.WithStruct(&api.Plugin{}))
+		g.Group("/ssh", fbr.WithStruct(&api.Ssh{}))
 	})
 
 	s.Static("/", "./web/build/")
