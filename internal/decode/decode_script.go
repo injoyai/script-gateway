@@ -2,6 +2,7 @@ package decode
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sync"
 	"time"
@@ -16,12 +17,12 @@ var _ Processor = (*Script)(nil)
 type Script struct {
 	Key_  string
 	Name_ string
-	Fn    func(msg *types.Message) (*types.Message, error)
+	Fn    func(msg *types.Message) ([]*types.Message, error)
 }
 
-func (this *Script) Process(msg *types.Message) (*types.Message, error) {
+func (this *Script) Process(msg *types.Message) ([]*types.Message, error) {
 	if this.Fn == nil {
-		return msg, nil
+		return []*types.Message{msg}, nil
 	}
 	return this.Fn(msg)
 }
@@ -29,7 +30,7 @@ func (this *Script) Process(msg *types.Message) (*types.Message, error) {
 func (this *Script) Key() string  { return this.Key_ }
 func (this *Script) Name() string { return this.Name_ }
 
-func NewScript(key, name string, fn func(msg *types.Message) (*types.Message, error)) *Script {
+func NewScript(key, name string, fn func(msg *types.Message) ([]*types.Message, error)) *Script {
 	return &Script{Key_: key, Name_: name, Fn: fn}
 }
 
@@ -41,29 +42,27 @@ type Decoder interface {
 // ScriptProcessor 执行脚本处理器。
 // 脚本必须定义 Process 函数：
 //
-//	func Process(payload []byte) ([]byte, error)
+//	func Process(payload []byte) (map[string]any, error)
 //
 // 返回值约定：
 //
-//	data, nil  - 通过，使用 data 替换原 payload（topic 由 outTopic 决定）
-//	nil,  nil  - 丢弃该消息
-//	_,    err  - 出错，调用方降级使用原消息
+//	map 不为空, nil - 通过；key 为 topic，value 为消息内容（框架自动 JSON 序列化，[]byte 直接透传）
+//	nil/空 map, nil - 丢弃该消息
+//	_, err         - 出错，调用方降级使用原消息
 //
-// outTopic 非空时覆盖原 topic；为空保留原 topic。
+// topic 完全由脚本返回的 key 决定，outTopic 已废弃。
 type ScriptProcessor struct {
 	mu        sync.Mutex
 	content   string
-	outTopic  string
 	timeout   time.Duration
 	compiled  bool
-	processFn func([]byte) ([]byte, error)
+	processFn func([]byte) (map[string]any, error)
 }
 
-func NewScriptProcessor(content string, outTopic string) *ScriptProcessor {
+func NewScriptProcessor(content string, _ string) *ScriptProcessor {
 	return &ScriptProcessor{
-		content:  content,
-		outTopic: outTopic,
-		timeout:  50 * time.Millisecond,
+		content: content,
+		timeout: 50 * time.Millisecond,
 	}
 }
 
@@ -84,25 +83,25 @@ func (p *ScriptProcessor) compile() error {
 	if err != nil {
 		return fmt.Errorf("script processor must define `Process` function: %w", err)
 	}
-	fn, ok := v.Interface().(func([]byte) ([]byte, error))
+	fn, ok := v.Interface().(func([]byte) (map[string]any, error))
 	if !ok {
-		return fmt.Errorf("script processor `Process` signature mismatch, expect func([]byte) ([]byte, error)")
+		return fmt.Errorf("script processor `Process` signature mismatch, expect func([]byte) (map[string]any, error)")
 	}
 	p.processFn = fn
 	p.compiled = true
 	return nil
 }
 
-func (p *ScriptProcessor) Process(msg *types.Message) (*types.Message, error) {
+func (p *ScriptProcessor) Process(msg *types.Message) ([]*types.Message, error) {
 	if p == nil || p.content == "" {
-		return msg, nil
+		return []*types.Message{msg}, nil
 	}
 	if err := p.compile(); err != nil {
-		return msg, err
+		return nil, err
 	}
 	type result struct {
-		payload []byte
-		err     error
+		items map[string]any
+		err   error
 	}
 	resCh := make(chan result, 1)
 	go func() {
@@ -111,27 +110,51 @@ func (p *ScriptProcessor) Process(msg *types.Message) (*types.Message, error) {
 				resCh <- result{err: fmt.Errorf("script processor panic: %v", r)}
 			}
 		}()
-		payload, err := p.processFn(msg.Payload)
-		resCh <- result{payload: payload, err: err}
+		items, err := p.processFn(msg.Payload)
+		resCh <- result{items: items, err: err}
 	}()
 
 	select {
 	case r := <-resCh:
 		if r.err != nil {
-			return msg, r.err
+			return []*types.Message{msg}, r.err
 		}
-		// 约定：payload 为 nil 表示丢弃
-		if r.payload == nil {
+		if len(r.items) == 0 {
 			return nil, nil
 		}
-		out := &types.Message{ID: msg.ID, Payload: r.payload, Topic: msg.Topic, Metadata: msg.Metadata}
-		if p.outTopic != "" {
-			out.Topic = p.outTopic
+		outs := make([]*types.Message, 0, len(r.items))
+		for topic, data := range r.items {
+			if topic == "" {
+				continue
+			}
+			payload, err := marshalScriptData(data)
+			if err != nil {
+				return []*types.Message{msg}, fmt.Errorf("script processor marshal topic %q: %w", topic, err)
+			}
+			outs = append(outs, &types.Message{
+				ID:       msg.ID,
+				Payload:  payload,
+				Topic:    topic,
+				Metadata: msg.Metadata,
+			})
 		}
-		return out, nil
+		if len(outs) == 0 {
+			return nil, nil
+		}
+		return outs, nil
 	case <-time.After(p.timeout):
-		return msg, fmt.Errorf("script processor timeout after %v", p.timeout)
+		return []*types.Message{msg}, fmt.Errorf("script processor timeout after %v", p.timeout)
 	}
+}
+
+func marshalScriptData(data any) ([]byte, error) {
+	if data == nil {
+		return nil, nil
+	}
+	if payload, ok := data.([]byte); ok {
+		return payload, nil
+	}
+	return json.Marshal(data)
 }
 
 // PluginProcessor 通过 processor 插件实现的处理器链节点
@@ -148,17 +171,17 @@ func NewPluginProcessor(name string, params map[string]any) *PluginProcessor {
 func (p *PluginProcessor) Key() string  { return "plugin:" + p.PluginName }
 func (p *PluginProcessor) Name() string { return "插件处理:" + p.PluginName }
 
-func (p *PluginProcessor) Process(msg *types.Message) (*types.Message, error) {
+func (p *PluginProcessor) Process(msg *types.Message) ([]*types.Message, error) {
 	if p == nil || p.PluginName == "" {
-		return msg, nil
+		return []*types.Message{msg}, nil
 	}
 	plg, ok := plugin.Default.Get(plugin.TypeProcessor, p.PluginName)
 	if !ok {
-		return msg, fmt.Errorf("processor plugin %q not found", p.PluginName)
+		return nil, fmt.Errorf("processor plugin %q not found", p.PluginName)
 	}
 	np, nt, nm, pass, err := plugin.InvokeProcess(context.Background(), plg, msg.Payload, msg.Topic, msg.Metadata, p.Params, p.Timeout)
 	if err != nil {
-		return msg, err
+		return nil, err
 	}
 	if !pass {
 		return nil, nil
@@ -173,5 +196,5 @@ func (p *PluginProcessor) Process(msg *types.Message) (*types.Message, error) {
 	if nm != nil {
 		out.Metadata = nm
 	}
-	return out, nil
+	return []*types.Message{out}, nil
 }

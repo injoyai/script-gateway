@@ -10,9 +10,9 @@ var _ Processor = (*ModbusRTU)(nil)
 
 type ModbusRTU struct{}
 
-func (this *ModbusRTU) Process(msg *types.Message) (*types.Message, error) {
+func (this *ModbusRTU) Process(msg *types.Message) ([]*types.Message, error) {
 	// TODO: 实现 Modbus RTU 协议解析
-	return msg, fmt.Errorf("ModbusRTU processor not implemented")
+	return nil, fmt.Errorf("ModbusRTU processor not implemented")
 }
 
 func (this *ModbusRTU) Key() string  { return "modbus_rtu" }

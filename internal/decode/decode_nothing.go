@@ -6,8 +6,8 @@ var _ Processor = (*Nothing)(nil)
 
 type Nothing struct{}
 
-func (this *Nothing) Process(msg *types.Message) (*types.Message, error) {
-	return msg, nil
+func (this *Nothing) Process(msg *types.Message) ([]*types.Message, error) {
+	return []*types.Message{msg}, nil
 }
 
 func (this *Nothing) Key() string  { return "pass" }

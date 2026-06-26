@@ -854,15 +854,20 @@ func (m *Manager) StartPipeline(cfg *model.ProcessorChain) error {
 		})
 		go func(ch <-chan *types.Message, p *decode.Pipeline, q *queue.Queue, outTopic string) {
 			for msg := range ch {
-				result, err := p.Process(msg)
+				results, err := p.Process(msg)
 				if err != nil {
 					logs.Err(fmt.Sprintf("Pipeline process error: %v", err))
 					continue
 				}
-				if outTopic != "" && result.Topic == msg.Topic {
-					result.Topic = outTopic
+				for _, result := range results {
+					if result == nil {
+						continue
+					}
+					if outTopic != "" && result.Topic == msg.Topic {
+						result.Topic = outTopic
+					}
+					q.Publish(result)
 				}
-				q.Publish(result)
 			}
 		}(ch, p, m.queue, cfg.OutTopic)
 	}

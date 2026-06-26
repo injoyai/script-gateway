@@ -21,7 +21,7 @@ func NewFieldMapProcessor(mapping map[string]string, outTopic string) *FieldMapP
 func (p *FieldMapProcessor) Key() string  { return "field_map" }
 func (p *FieldMapProcessor) Name() string { return "字段映射" }
 
-func (p *FieldMapProcessor) Process(msg *types.Message) (*types.Message, error) {
+func (p *FieldMapProcessor) Process(msg *types.Message) ([]*types.Message, error) {
 	var data map[string]any
 	if err := json.Unmarshal(msg.Payload, &data); err != nil {
 		return nil, fmt.Errorf("field_map unmarshal: %w", err)
@@ -41,5 +41,5 @@ func (p *FieldMapProcessor) Process(msg *types.Message) (*types.Message, error) 
 	if p.OutTopic != "" {
 		out.Topic = p.OutTopic
 	}
-	return out, nil
+	return []*types.Message{out}, nil
 }

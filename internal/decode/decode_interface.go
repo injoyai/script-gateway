@@ -7,13 +7,18 @@ import (
 )
 
 // Processor 数据处理器接口
+//
+// Process 返回 []*Message：
+//   - 长度 0 或返回 nil 切片：丢弃该消息（不向下游传递）
+//   - 长度 1：常规一进一出
+//   - 长度 >1：一进多出（分流场景，如脚本按 topic 拆分）
 type Processor interface {
-	Process(msg *types.Message) (*types.Message, error)
+	Process(msg *types.Message) ([]*types.Message, error)
 	Key() string
 	Name() string
 }
 
-// Pipeline 处理器链，顺序执行
+// Pipeline 处理器链，顺序执行（fan-out 模式：上游产出的每条消息独立流过下游）
 type Pipeline struct {
 	processors []Processor
 }
@@ -23,17 +28,23 @@ func NewPipeline(processors ...Processor) *Pipeline {
 	return &Pipeline{processors: processors}
 }
 
-// Process 顺序执行处理器，错误中断链路
-func (p *Pipeline) Process(msg *types.Message) (*types.Message, error) {
-	var err error
-	current := msg
+// Process 顺序执行处理器，错误中断链路。
+// 返回最终产出的消息列表（可能 0 / 1 / N 条）。
+func (p *Pipeline) Process(msg *types.Message) ([]*types.Message, error) {
+	current := []*types.Message{msg}
 	for _, proc := range p.processors {
-		current, err = proc.Process(current)
-		if err != nil {
-			return nil, fmt.Errorf("processor %s failed: %w", proc.Key(), err)
+		next := make([]*types.Message, 0, len(current))
+		for _, m := range current {
+			out, err := proc.Process(m)
+			if err != nil {
+				return nil, fmt.Errorf("processor %s failed: %w", proc.Key(), err)
+			}
+			next = append(next, out...)
 		}
-		if current == nil {
-			return nil, fmt.Errorf("processor %s returned nil message", proc.Key())
+		current = next
+		if len(current) == 0 {
+			// 所有消息均被丢弃，提前结束
+			return nil, nil
 		}
 	}
 	return current, nil

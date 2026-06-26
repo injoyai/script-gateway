@@ -87,7 +87,7 @@ const createNodeId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 
 const createDefaultNode = (key = 'script'): VisualProcessorNode => ({
   id: createNodeId(),
   key,
-  config: key === 'script' ? { script: DEFAULT_PROCESS_SCRIPT, topic: '' } : { topic: '' },
+  config: key === 'script' ? { script: DEFAULT_PROCESS_SCRIPT } : { topic: '' },
 });
 
 const parseProcessors = (raw?: string): ProcessorConfigItem[] => {
@@ -468,7 +468,7 @@ const ProcessorChainManager: React.FC = () => {
         const payload = {
           name: '未命名数据处理',
           topic: '',
-          processors: JSON.stringify([{ key: 'script', config: JSON.stringify({ script: DEFAULT_PROCESS_SCRIPT, topic: '' }) }]),
+          processors: JSON.stringify([{ key: 'script', config: JSON.stringify({ script: DEFAULT_PROCESS_SCRIPT }) }]),
           enable: true,
         };
         const res = await fetch(`${API_BASE}/processor_chain/create`, {
@@ -497,6 +497,10 @@ const ProcessorChainManager: React.FC = () => {
       const processors = values.mode === ADVANCED_MODE
         ? buildProcessorItems(advancedNodes)
         : buildSimpleProcessor(values);
+      if (!processors.length) {
+        message.error('请至少配置一个处理器');
+        return;
+      }
       const payload = {
         id: selectedItem.id,
         name: values.name,
@@ -982,9 +986,11 @@ const ProcessorChainManager: React.FC = () => {
             <Form.Item name="topic" label="订阅 Topic" rules={[{ required: true, message: '请输入订阅 Topic' }]}>
               <Input placeholder="例如：device.temp.raw" />
             </Form.Item>
-            <Form.Item name="out_topic" label="输出 Topic" tooltip="处理后输出到该 Topic；留空则沿用处理器内部返回或原 Topic">
-              <Input placeholder="例如：device.temp.cleaned" />
-            </Form.Item>
+            {selectedProcessorKey !== 'script' && (
+              <Form.Item name="out_topic" label="输出 Topic" tooltip="处理后输出到该 Topic；留空则沿用处理器内部返回或原 Topic">
+                <Input placeholder="例如：device.temp.cleaned" />
+              </Form.Item>
+            )}
             <Form.Item name="mode" label="模式" rules={[{ required: true, message: '请选择模式' }]}>
               <Select onChange={handleModeChange} options={[{ value: SIMPLE_MODE, label: '简单模式' }, { value: ADVANCED_MODE, label: '高级模式' }]} />
             </Form.Item>

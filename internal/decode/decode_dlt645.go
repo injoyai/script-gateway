@@ -10,9 +10,9 @@ var _ Processor = (*DLT645)(nil)
 
 type DLT645 struct{}
 
-func (this *DLT645) Process(msg *types.Message) (*types.Message, error) {
+func (this *DLT645) Process(msg *types.Message) ([]*types.Message, error) {
 	// TODO: 实现 DLT645 协议解析
-	return msg, fmt.Errorf("DLT645 processor not implemented")
+	return nil, fmt.Errorf("DLT645 processor not implemented")
 }
 
 func (this *DLT645) Key() string  { return "dlt645" }

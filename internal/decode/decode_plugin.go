@@ -26,21 +26,21 @@ func NewPluginDecoder(name string, params map[string]any) *PluginDecoder {
 func (d *PluginDecoder) Key() string  { return "plugin:" + d.PluginName }
 func (d *PluginDecoder) Name() string { return "插件解码:" + d.PluginName }
 
-func (d *PluginDecoder) Process(msg *types.Message) (*types.Message, error) {
+func (d *PluginDecoder) Process(msg *types.Message) ([]*types.Message, error) {
 	p, ok := plugin.Default.Get(plugin.TypeDecoder, d.PluginName)
 	if !ok {
-		return msg, nil
+		return []*types.Message{msg}, nil
 	}
 	out, err := plugin.InvokeDecode(context.Background(), p, msg.Payload, d.Params, d.Timeout)
 	if err != nil {
-		return msg, err
+		return nil, err
 	}
 	if out == nil {
-		return msg, nil
+		return []*types.Message{msg}, nil
 	}
 	b, err := json.Marshal(out)
 	if err != nil {
-		return msg, err
+		return nil, err
 	}
-	return &types.Message{ID: msg.ID, Payload: b, Topic: msg.Topic, Metadata: msg.Metadata}, nil
+	return []*types.Message{{ID: msg.ID, Payload: b, Topic: msg.Topic, Metadata: msg.Metadata}}, nil
 }

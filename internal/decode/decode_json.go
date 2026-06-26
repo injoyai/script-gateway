@@ -24,7 +24,7 @@ func NewJSONFormatProcessor(pretty bool, outTopic string) *JSONFormatProcessor {
 func (p *JSONFormatProcessor) Key() string  { return "json_format" }
 func (p *JSONFormatProcessor) Name() string { return "JSON格式化" }
 
-func (p *JSONFormatProcessor) Process(msg *types.Message) (*types.Message, error) {
+func (p *JSONFormatProcessor) Process(msg *types.Message) ([]*types.Message, error) {
 	var data any
 	if err := json.Unmarshal(msg.Payload, &data); err != nil {
 		return nil, fmt.Errorf("json_format unmarshal: %w", err)
@@ -44,7 +44,7 @@ func (p *JSONFormatProcessor) Process(msg *types.Message) (*types.Message, error
 	if p.OutTopic != "" {
 		out.Topic = p.OutTopic
 	}
-	return out, nil
+	return []*types.Message{out}, nil
 }
 
 type JSONExtractProcessor struct {
@@ -59,7 +59,7 @@ func NewJSONExtractProcessor(path string, outTopic string) *JSONExtractProcessor
 func (p *JSONExtractProcessor) Key() string  { return "json_extract" }
 func (p *JSONExtractProcessor) Name() string { return "JSON提取" }
 
-func (p *JSONExtractProcessor) Process(msg *types.Message) (*types.Message, error) {
+func (p *JSONExtractProcessor) Process(msg *types.Message) ([]*types.Message, error) {
 	var data any
 	if err := json.Unmarshal(msg.Payload, &data); err != nil {
 		return nil, fmt.Errorf("json_extract unmarshal: %w", err)
@@ -77,7 +77,7 @@ func (p *JSONExtractProcessor) Process(msg *types.Message) (*types.Message, erro
 	if p.OutTopic != "" {
 		out.Topic = p.OutTopic
 	}
-	return out, nil
+	return []*types.Message{out}, nil
 }
 
 type JSONFilterProcessor struct {
@@ -93,7 +93,7 @@ func NewJSONFilterProcessor(path string, equals string, outTopic string) *JSONFi
 func (p *JSONFilterProcessor) Key() string  { return "json_filter" }
 func (p *JSONFilterProcessor) Name() string { return "JSON过滤" }
 
-func (p *JSONFilterProcessor) Process(msg *types.Message) (*types.Message, error) {
+func (p *JSONFilterProcessor) Process(msg *types.Message) ([]*types.Message, error) {
 	var data any
 	if err := json.Unmarshal(msg.Payload, &data); err != nil {
 		return nil, fmt.Errorf("json_filter unmarshal: %w", err)
@@ -109,7 +109,7 @@ func (p *JSONFilterProcessor) Process(msg *types.Message) (*types.Message, error
 	if p.OutTopic != "" {
 		out.Topic = p.OutTopic
 	}
-	return out, nil
+	return []*types.Message{out}, nil
 }
 
 func getJSONPathValue(data any, path string) (any, bool) {

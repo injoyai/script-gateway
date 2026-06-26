@@ -24,13 +24,13 @@ func NewTextReplaceProcessor(from string, to string, outTopic string) *TextRepla
 func (p *TextReplaceProcessor) Key() string  { return "text_replace" }
 func (p *TextReplaceProcessor) Name() string { return "文本替换" }
 
-func (p *TextReplaceProcessor) Process(msg *types.Message) (*types.Message, error) {
+func (p *TextReplaceProcessor) Process(msg *types.Message) ([]*types.Message, error) {
 	out := cloneMessage(msg)
 	out.Payload = []byte(strings.ReplaceAll(string(msg.Payload), p.From, p.To))
 	if p.OutTopic != "" {
 		out.Topic = p.OutTopic
 	}
-	return out, nil
+	return []*types.Message{out}, nil
 }
 
 type TextRegexFilterProcessor struct {
@@ -45,7 +45,7 @@ func NewTextRegexFilterProcessor(pattern string, outTopic string) *TextRegexFilt
 func (p *TextRegexFilterProcessor) Key() string  { return "text_regex_filter" }
 func (p *TextRegexFilterProcessor) Name() string { return "正则过滤" }
 
-func (p *TextRegexFilterProcessor) Process(msg *types.Message) (*types.Message, error) {
+func (p *TextRegexFilterProcessor) Process(msg *types.Message) ([]*types.Message, error) {
 	re, err := regexp.Compile(p.Pattern)
 	if err != nil {
 		return nil, fmt.Errorf("text_regex_filter compile: %w", err)
@@ -57,5 +57,5 @@ func (p *TextRegexFilterProcessor) Process(msg *types.Message) (*types.Message, 
 	if p.OutTopic != "" {
 		out.Topic = p.OutTopic
 	}
-	return out, nil
+	return []*types.Message{out}, nil
 }
