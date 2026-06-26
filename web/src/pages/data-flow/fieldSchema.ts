@@ -30,11 +30,34 @@ export interface NodeFieldSchema {
   fields: FieldSpec[];
 }
 
-// listener pre_script 默认模板（对齐 HttpListener.tsx 的 DEFAULT_PRE_SCRIPT）
+// listener pre_script 默认模板（对齐 pre_processor.go，所有 listener 共用的入站预处理）
 export const DEFAULT_PRE_SCRIPT = `package main
 
-func Process(payload []byte, topic string, metadata map[string]any) ([]byte, string, map[string, any>, bool, error) {
+func Process(payload []byte, topic string, metadata map[string]any) ([]byte, string, map[string]any, bool, error) {
 	return payload, topic, metadata, true, nil
+}
+`;
+
+// script_conn 的 content 字段默认模板（对齐 listen_script.go，顶级 Run/OnMessage 函数）
+// Run：入站，产生数据推入队列；OnMessage：出站，接收队列推来的消息
+export const DEFAULT_SCRIPT_CONTENT = `package main
+
+import (
+	"context"
+	"time"
+)
+
+// Run 入站：产生数据推入队列。返回 (data, err)，err 非 nil 会重试。
+// 签名可为 func Run() ([]byte, error) 或 func Run(context.Context) ([]byte, error)
+func Run(ctx context.Context) ([]byte, error) {
+	time.Sleep(time.Second)
+	return []byte("hello"), nil
+}
+
+// OnMessage 出站：接收队列推来的消息。返回处理错误。
+// 如不需要出站，可省略此函数。
+func OnMessage(payload []byte) error {
+	return nil
 }
 `;
 
@@ -141,8 +164,8 @@ const listenerConnSchemas: NodeFieldSchema[] = [
       nameField(),
       topicField('topic', '入站 Topic'),
       topicField('out_topic', '出站 Topic'),
-      { key: 'content', label: '内容模板', type: 'textarea', fromConfig: true },
-      { key: 'pre_script', label: '预处理脚本', type: 'script', scriptLang: 'go', default: DEFAULT_PRE_SCRIPT },
+      { key: 'content', label: '监听器脚本', type: 'script', scriptLang: 'go', fromConfig: true, default: DEFAULT_SCRIPT_CONTENT, tooltip: '脚本监听器本体脚本，定义顶级 Run（入站产生数据）和 OnMessage（出站接收消息）函数' },
+      { key: 'pre_script', label: '入站预处理脚本', type: 'script', scriptLang: 'go', default: DEFAULT_PRE_SCRIPT, tooltip: '入站消息预处理，所有 listener 共用，定义顶级 Process 函数' },
     ],
   },
 ];
