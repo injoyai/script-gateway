@@ -13,21 +13,19 @@ import (
 // PreProcessor 监听器前置处理脚本
 // 用户脚本必须定义函数:
 //
-//	func Process(payload []byte, topic string, metadata map[string]any) ([]byte, string, map[string]any, bool, error)
+//	func Process(payload []byte) ([]byte, error)
 //
-// 返回值:
+// 返回值约定:
 //
-//	newPayload  - 处理后的 payload (传 nil 表示不修改)
-//	newTopic    - 处理后的 topic   (传空串表示不修改)
-//	newMetadata - 处理后的 metadata(传 nil 表示不修改)
-//	pass        - false 表示丢弃该消息,不投递到内部消息总线
-//	err         - 处理出错
+//	data, nil  - 通过，使用 data 替换原 payload（topic/metadata 不变）
+//	nil,  nil  - 丢弃该消息，不投递到内部消息总线
+//	_,    err  - 出错，调用方降级使用原消息
 type PreProcessor struct {
 	mu        sync.Mutex
 	content   string
 	timeout   time.Duration
 	compiled  bool
-	processFn func([]byte, string, map[string]any) ([]byte, string, map[string]any, bool, error)
+	processFn func([]byte) ([]byte, error)
 }
 
 // NewPreProcessor 创建预处理脚本执行器,如 content 为空则返回 nil
@@ -59,9 +57,9 @@ func (p *PreProcessor) compile() error {
 	if err != nil {
 		return fmt.Errorf("pre_script must define `Process` function: %w", err)
 	}
-	fn, ok := v.Interface().(func([]byte, string, map[string]any) ([]byte, string, map[string]any, bool, error))
+	fn, ok := v.Interface().(func([]byte) ([]byte, error))
 	if !ok {
-		return fmt.Errorf("pre_script `Process` signature mismatch, expect func([]byte, string, map[string]any) ([]byte, string, map[string]any, bool, error)")
+		return fmt.Errorf("pre_script `Process` signature mismatch, expect func([]byte) ([]byte, error)")
 	}
 	p.processFn = fn
 	p.compiled = true
@@ -69,7 +67,7 @@ func (p *PreProcessor) compile() error {
 }
 
 // Process 执行预处理。返回 (msg, pass, err)。
-// pass=false 表示消息被脚本丢弃。
+// pass=false 表示消息被脚本丢弃（payload 为 nil）。
 // 当 err != nil 时调用方应使用原始消息(降级)。
 func (p *PreProcessor) Process(msg *types.Message) (*types.Message, bool, error) {
 	if p == nil || p.processFn == nil {
@@ -77,11 +75,8 @@ func (p *PreProcessor) Process(msg *types.Message) (*types.Message, bool, error)
 	}
 
 	type result struct {
-		payload  []byte
-		topic    string
-		metadata map[string]any
-		pass     bool
-		err      error
+		payload []byte
+		err     error
 	}
 	resCh := make(chan result, 1)
 
@@ -91,8 +86,8 @@ func (p *PreProcessor) Process(msg *types.Message) (*types.Message, bool, error)
 				resCh <- result{err: fmt.Errorf("pre_script panic: %v", r)}
 			}
 		}()
-		np, nt, nm, pass, err := p.processFn(msg.Payload, msg.Topic, msg.Metadata)
-		resCh <- result{payload: np, topic: nt, metadata: nm, pass: pass, err: err}
+		np, err := p.processFn(msg.Payload)
+		resCh <- result{payload: np, err: err}
 	}()
 
 	select {
@@ -100,23 +95,15 @@ func (p *PreProcessor) Process(msg *types.Message) (*types.Message, bool, error)
 		if r.err != nil {
 			return msg, true, r.err
 		}
-		if !r.pass {
+		// 约定：payload 为 nil 表示丢弃
+		if r.payload == nil {
 			return nil, false, nil
 		}
 		out := &types.Message{
 			ID:       msg.ID,
-			Payload:  msg.Payload,
+			Payload:  r.payload,
 			Topic:    msg.Topic,
 			Metadata: msg.Metadata,
-		}
-		if r.payload != nil {
-			out.Payload = r.payload
-		}
-		if r.topic != "" {
-			out.Topic = r.topic
-		}
-		if r.metadata != nil {
-			out.Metadata = r.metadata
 		}
 		return out, true, nil
 	case <-time.After(p.timeout):

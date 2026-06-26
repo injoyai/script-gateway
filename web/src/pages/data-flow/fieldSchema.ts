@@ -31,10 +31,14 @@ export interface NodeFieldSchema {
 }
 
 // listener pre_script 默认模板（对齐 pre_processor.go，所有 listener 共用的入站预处理）
+// 签名：func Process(payload []byte) ([]byte, error)
+//   - data, nil  通过，使用 data 替换原 payload
+//   - nil,  nil  丢弃该消息
+//   - _,    err  出错，调用方降级使用原消息
 export const DEFAULT_PRE_SCRIPT = `package main
 
-func Process(payload []byte, topic string, metadata map[string]any) ([]byte, string, map[string]any, bool, error) {
-	return payload, topic, metadata, true, nil
+func Process(payload []byte) ([]byte, error) {
+	return payload, nil
 }
 `;
 
@@ -178,7 +182,7 @@ const listenerConnSchemas: NodeFieldSchema[] = [
       topicField('topic', '入站 Topic'),
       topicField('out_topic', '出站 Topic'),
       { key: 'content', label: '监听器脚本', type: 'script', scriptLang: 'go', fromConfig: true, default: DEFAULT_SCRIPT_CONTENT, tooltip: '定义顶级 Run（启用）/Close（禁用使 Run 退出）/Read（入站）/Write（出站可选）函数 + 包级变量持有状态' },
-      { key: 'pre_script', label: '入站预处理脚本', type: 'script', scriptLang: 'go', default: DEFAULT_PRE_SCRIPT, tooltip: '入站消息预处理，所有 listener 共用，定义顶级 Process 函数' },
+      { key: 'pre_script', label: '入站预处理脚本', type: 'script', scriptLang: 'go', default: DEFAULT_PRE_SCRIPT, tooltip: '入站消息预处理，所有 listener 共用，定义 func Process(payload []byte) ([]byte, error)：返回 data,nil 通过；nil,nil 丢弃；_,err 出错' },
     ],
   },
 ];

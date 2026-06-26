@@ -41,16 +41,22 @@ type Decoder interface {
 // ScriptProcessor 执行脚本处理器。
 // 脚本必须定义 Process 函数：
 //
-//	func Process(payload []byte, topic string, metadata map[string]any) ([]byte, string, map[string]any, bool, error)
+//	func Process(payload []byte) ([]byte, error)
 //
-// outTopic 为空时，优先使用脚本返回的 topic，其次保留原 topic。
+// 返回值约定：
+//
+//	data, nil  - 通过，使用 data 替换原 payload（topic 由 outTopic 决定）
+//	nil,  nil  - 丢弃该消息
+//	_,    err  - 出错，调用方降级使用原消息
+//
+// outTopic 非空时覆盖原 topic；为空保留原 topic。
 type ScriptProcessor struct {
 	mu        sync.Mutex
 	content   string
 	outTopic  string
 	timeout   time.Duration
 	compiled  bool
-	processFn func([]byte, string, map[string]any) ([]byte, string, map[string]any, bool, error)
+	processFn func([]byte) ([]byte, error)
 }
 
 func NewScriptProcessor(content string, outTopic string) *ScriptProcessor {
@@ -78,9 +84,9 @@ func (p *ScriptProcessor) compile() error {
 	if err != nil {
 		return fmt.Errorf("script processor must define `Process` function: %w", err)
 	}
-	fn, ok := v.Interface().(func([]byte, string, map[string]any) ([]byte, string, map[string]any, bool, error))
+	fn, ok := v.Interface().(func([]byte) ([]byte, error))
 	if !ok {
-		return fmt.Errorf("script processor `Process` signature mismatch")
+		return fmt.Errorf("script processor `Process` signature mismatch, expect func([]byte) ([]byte, error)")
 	}
 	p.processFn = fn
 	p.compiled = true
@@ -95,11 +101,8 @@ func (p *ScriptProcessor) Process(msg *types.Message) (*types.Message, error) {
 		return msg, err
 	}
 	type result struct {
-		payload  []byte
-		topic    string
-		metadata map[string]any
-		pass     bool
-		err      error
+		payload []byte
+		err     error
 	}
 	resCh := make(chan result, 1)
 	go func() {
@@ -108,8 +111,8 @@ func (p *ScriptProcessor) Process(msg *types.Message) (*types.Message, error) {
 				resCh <- result{err: fmt.Errorf("script processor panic: %v", r)}
 			}
 		}()
-		payload, topic, metadata, pass, err := p.processFn(msg.Payload, msg.Topic, msg.Metadata)
-		resCh <- result{payload: payload, topic: topic, metadata: metadata, pass: pass, err: err}
+		payload, err := p.processFn(msg.Payload)
+		resCh <- result{payload: payload, err: err}
 	}()
 
 	select {
@@ -117,20 +120,13 @@ func (p *ScriptProcessor) Process(msg *types.Message) (*types.Message, error) {
 		if r.err != nil {
 			return msg, r.err
 		}
-		if !r.pass {
+		// 约定：payload 为 nil 表示丢弃
+		if r.payload == nil {
 			return nil, nil
 		}
-		out := &types.Message{ID: msg.ID, Payload: msg.Payload, Topic: msg.Topic, Metadata: msg.Metadata}
-		if r.payload != nil {
-			out.Payload = r.payload
-		}
+		out := &types.Message{ID: msg.ID, Payload: r.payload, Topic: msg.Topic, Metadata: msg.Metadata}
 		if p.outTopic != "" {
 			out.Topic = p.outTopic
-		} else if r.topic != "" {
-			out.Topic = r.topic
-		}
-		if r.metadata != nil {
-			out.Metadata = r.metadata
 		}
 		return out, nil
 	case <-time.After(p.timeout):
