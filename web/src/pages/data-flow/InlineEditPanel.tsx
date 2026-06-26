@@ -28,6 +28,8 @@ interface Props {
   target: EditTarget;
   onClose: () => void;
   onSaved: () => void;
+  // 仅 listener 类型支持跳转高级编辑 Modal
+  onAdvancedEdit?: (kind: 'listenerParent' | 'listener', type: string, node: any) => void;
 }
 
 // 解析 JSON 配置字段
@@ -37,7 +39,7 @@ const parseJSON = (s?: string): any => {
 };
 
 // 内联编辑面板 - 核心是修改 topic 路由 + 基本配置
-export const InlineEditPanel: React.FC<Props> = ({ target, onClose, onSaved }) => {
+export const InlineEditPanel: React.FC<Props> = ({ target, onClose, onSaved, onAdvancedEdit }) => {
   const [form] = Form.useForm();
   const [saving, setSaving] = useState(false);
 
@@ -222,6 +224,11 @@ export const InlineEditPanel: React.FC<Props> = ({ target, onClose, onSaved }) =
       destroyOnClose
       extra={
         <Space>
+          {onAdvancedEdit && (target.kind === 'listenerParent' || target.kind === 'listener') && (
+            <Button onClick={() => onAdvancedEdit(target.kind, target.data.type, target.data)}>
+              高级编辑
+            </Button>
+          )}
           <Button onClick={onClose}>取消</Button>
           <Button type="primary" loading={saving} onClick={handleSave}>保存</Button>
         </Space>
