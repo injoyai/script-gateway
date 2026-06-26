@@ -8,31 +8,36 @@ import (
 )
 
 // 测试1：完整生命周期 → Start/Read/Write/Close 全流程
+// Run 无 ctx，靠 Close 使 server 退出（chan close 让 <-chan 返回 ok=false）
 func TestScriptListener_FullLifecycle(t *testing.T) {
 	src := `package main
 
-import (
-	"context"
-	"time"
-)
+import "time"
 
-var count int
+var ch chan []byte
 
-func Run(ctx context.Context) error {
-	count = 0
-	<-ctx.Done()
+func Run() error {
+	ch = make(chan []byte, 10)
+	// 模拟阻塞，直到 ch 被 Close
+	for range ch {
+	}
 	return nil
 }
 
-func Close() error { return nil }
+func Close() error {
+	close(ch)
+	return nil
+}
 
-func Read(ctx context.Context) ([]byte, error) {
+func Read() ([]byte, error) {
 	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
+	case data, ok := <-ch:
+		if !ok {
+			return nil, nil
+		}
+		return data, nil
 	case <-time.After(time.Millisecond * 50):
 	}
-	count++
 	return []byte("hello"), nil
 }
 
@@ -55,7 +60,7 @@ func Write(p []byte) error { return nil }
 		t.Fatalf("msg = %q, want hello", string(msg))
 	}
 
-	// 关闭
+	// 关闭（Close 使 Run 退出）
 	if err := l.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
 	}
@@ -90,9 +95,7 @@ func Close() error { return nil }
 func TestScriptListener_MissingClose(t *testing.T) {
 	src := `package main
 
-import "context"
-
-func Run(ctx context.Context) error { <-ctx.Done(); return nil }
+func Run() error { return nil }
 `
 	l := NewScriptListener(src, "test/topic")
 	err := l.Start(context.Background())
@@ -108,9 +111,7 @@ func Run(ctx context.Context) error { <-ctx.Done(); return nil }
 func TestScriptListener_MissingRead(t *testing.T) {
 	src := `package main
 
-import "context"
-
-func Run(ctx context.Context) error { <-ctx.Done(); return nil }
+func Run() error { return nil }
 func Close() error { return nil }
 `
 	l := NewScriptListener(src, "test/topic")
@@ -127,14 +128,9 @@ func Close() error { return nil }
 func TestScriptListener_MissingWriteSilentDrop(t *testing.T) {
 	src := `package main
 
-import "context"
-
-func Run(ctx context.Context) error { <-ctx.Done(); return nil }
+func Run() error { select {} }
 func Close() error { return nil }
-func Read(ctx context.Context) ([]byte, error) {
-	<-ctx.Done()
-	return nil, ctx.Err()
-}
+func Read() ([]byte, error) { return []byte("x"), nil }
 `
 	l := NewScriptListener(src, "test/topic")
 	ctx, cancel := context.WithCancel(context.Background())
@@ -156,14 +152,9 @@ func Read(ctx context.Context) ([]byte, error) {
 func TestScriptListener_WriteNoError(t *testing.T) {
 	src := `package main
 
-import "context"
-
-func Run(ctx context.Context) error { <-ctx.Done(); return nil }
+func Run() error { select {} }
 func Close() error { return nil }
-func Read(ctx context.Context) ([]byte, error) {
-	<-ctx.Done()
-	return nil, ctx.Err()
-}
+func Read() ([]byte, error) { return []byte("x"), nil }
 func Write(p []byte) error { return nil }
 `
 	l := NewScriptListener(src, "test/topic")
@@ -182,7 +173,7 @@ func Write(p []byte) error { return nil }
 	}
 }
 
-// 测试7：旧脚本（顶级 Run 返回 []byte）→ Start 报签名不匹配
+// 测试7：旧脚本（Run 带 ctx 参数）→ Start 报签名不匹配
 func TestScriptListener_LegacyRunSignature(t *testing.T) {
 	src := `package main
 
@@ -194,7 +185,7 @@ func Run(ctx context.Context) ([]byte, error) {
 
 func Close() error { return nil }
 
-func Read(ctx context.Context) ([]byte, error) {
+func Read() ([]byte, error) {
 	return nil, nil
 }
 `
@@ -212,17 +203,14 @@ func Read(ctx context.Context) ([]byte, error) {
 func TestScriptListener_PackageVarStateShared(t *testing.T) {
 	src := `package main
 
-import (
-	"context"
-	"time"
-)
+import "time"
 
 var started bool
 
-func Run(ctx context.Context) error {
+func Run() error {
 	started = true
-	<-ctx.Done()
-	return nil
+	// 阻塞，靠 Close 使其返回
+	select {}
 }
 
 func Close() error {
@@ -233,12 +221,8 @@ func Close() error {
 	return nil
 }
 
-func Read(ctx context.Context) ([]byte, error) {
-	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	case <-time.After(time.Millisecond * 50):
-	}
+func Read() ([]byte, error) {
+	time.Sleep(time.Millisecond * 50)
 	return []byte("data"), nil
 }
 `

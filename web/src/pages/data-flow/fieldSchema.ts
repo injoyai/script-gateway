@@ -38,31 +38,26 @@ func Process(payload []byte, topic string, metadata map[string]any) ([]byte, str
 }
 `;
 
-// script_conn 的 content 字段默认模板（顶级函数 + 包级变量单例）
+// script_conn 的 content 字段默认模板（顶级函数 + 包级变量单例，无 ctx 参数）
 // 用户脚本定义 4 个顶级函数 + 包级 var 持有状态，每个 script_conn 实例独立 yaegi 解释器隔离
 export const DEFAULT_SCRIPT_CONTENT = `package main
 
-import (
-	"context"
-	"time"
-)
-
-// 单例状态（包级变量，跨 Run/Read/Close 调用共享）
+// 单例状态（包级变量，跨调用持有）
 var server *exampleServer
 
 type exampleServer struct {
 	ch chan []byte
 }
 
-// Run 启用：初始化资源（建连接/开端口等）。ctx 取消时必须返回。
-func Run(ctx context.Context) error {
+// 启用：初始化资源（建连接/开端口），阻塞直到 Close 使其返回
+func Run() error {
 	server = &exampleServer{ch: make(chan []byte, 10)}
-	// 示例：在此开启你的服务，数据通过 Read 读取
-	<-ctx.Done()
+	for range server.ch {
+	}
 	return nil
 }
 
-// Close 禁用：释放资源。Run 后调用。
+// 禁用：释放资源，使 Run 自然返回
 func Close() error {
 	if server != nil {
 		close(server.ch)
@@ -70,20 +65,13 @@ func Close() error {
 	return nil
 }
 
-// Read 入站：阻塞读取一条数据。ctx 取消时返回 (nil, ctx.Err())。
-func Read(ctx context.Context) ([]byte, error) {
-	select {
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	case <-time.After(time.Second):
-	}
+// 读取：阻塞读取一条数据
+func Read() ([]byte, error) {
 	return []byte("hello"), nil
 }
 
-// Write 出站：写入数据到连接。可选，不实现则忽略出站。
-func Write(p []byte) error {
-	return nil
-}
+// 可选：写入数据到连接。不实现则忽略出站。
+func Write(p []byte) error { return nil }
 `;
 
 const nameField = (label = '名称'): FieldSpec => ({
@@ -189,7 +177,7 @@ const listenerConnSchemas: NodeFieldSchema[] = [
       nameField(),
       topicField('topic', '入站 Topic'),
       topicField('out_topic', '出站 Topic'),
-      { key: 'content', label: '监听器脚本', type: 'script', scriptLang: 'go', fromConfig: true, default: DEFAULT_SCRIPT_CONTENT, tooltip: '脚本监听器本体脚本，定义顶级 Run（启用）/Close（禁用）/Read（入站）/Write（出站，可选）函数 + 包级变量持有状态' },
+      { key: 'content', label: '监听器脚本', type: 'script', scriptLang: 'go', fromConfig: true, default: DEFAULT_SCRIPT_CONTENT, tooltip: '定义顶级 Run（启用）/Close（禁用使 Run 退出）/Read（入站）/Write（出站可选）函数 + 包级变量持有状态' },
       { key: 'pre_script', label: '入站预处理脚本', type: 'script', scriptLang: 'go', default: DEFAULT_PRE_SCRIPT, tooltip: '入站消息预处理，所有 listener 共用，定义顶级 Process 函数' },
     ],
   },
