@@ -29,7 +29,6 @@ interface CodeEditorProps {
   theme?: 'material' | 'monokai' | 'dracula';
   placeholder?: string;
   height?: string;
-  refreshKey?: number; // 用于触发重新布局的 key
 }
 
 const CodeEditor: React.FC<CodeEditorProps> = ({
@@ -39,7 +38,6 @@ const CodeEditor: React.FC<CodeEditorProps> = ({
   theme = 'material',
   placeholder = '在此编辑代码...',
   height = '100%',
-  refreshKey = 0,
 }) => {
   const editorRef = useRef<any>(null);
 
@@ -88,17 +86,19 @@ const CodeEditor: React.FC<CodeEditorProps> = ({
     };
   };
 
-  // 当 refreshKey 变化时，延迟刷新编辑器布局
-  React.useEffect(() => {
-    if (refreshKey > 0 && editorRef.current) {
-      // 延迟等待 Drawer 动画完成
-      const timer = setTimeout(() => {
-        editorRef.current.refresh();
-        editorRef.current.setSize('100%', '100%');
-      }, 100);
-      return () => clearTimeout(timer);
-    }
-  }, [refreshKey]);
+  // refresh 策略：覆盖 Modal 打开动画全程（antd v4 约 300ms）
+  // 解决：1)动画期间容器尺寸变化导致闪烁 2)初始化时高度不对导致后半部分无高亮
+  const scheduleRefresh = (editor: any) => {
+    const doRefresh = () => {
+      editor.refresh();
+      editor.setSize('100%', '100%');
+      // 重新设置 mode 强制对整个文档重新 tokenize，修复 viewportMargin 下尾部行无高亮
+      editor.setOption('mode', cmMode);
+    };
+    requestAnimationFrame(doRefresh);
+    setTimeout(doRefresh, 100);
+    setTimeout(doRefresh, 300);
+  };
 
   return (
     <div className="code-editor-container" style={getContainerStyle()}>
@@ -106,6 +106,7 @@ const CodeEditor: React.FC<CodeEditorProps> = ({
         editorDidMount={(editor) => {
           editorRef.current = editor;
           editor.setSize('100%', '100%');
+          scheduleRefresh(editor);
         }}
         value={value}
         options={{

@@ -20,14 +20,10 @@ const ScriptEditorDrawer: React.FC = () => {
   const [content, setContent] = useState(initialContent);
   const [theme, setTheme] = useState<'material' | 'monokai' | 'dracula'>('material');
   const [saving, setSaving] = useState(false);
-  const [isDrawerOpen, setIsDrawerOpen] = useState(false);
 
   React.useEffect(() => {
     if (open) {
       setContent(initialContent);
-      setIsDrawerOpen(true);
-    } else {
-      setIsDrawerOpen(false);
     }
   }, [open, initialContent]);
 
@@ -86,13 +82,11 @@ const ScriptEditorDrawer: React.FC = () => {
     >
       <div style={{ height: '100%' }}>
         <CodeEditor
-          key={isDrawerOpen ? 'open' : 'closed'}
           value={content}
           onChange={setContent}
           language="go"
           theme={theme}
           height="100%"
-          refreshKey={isDrawerOpen ? 1 : 0}
         />
       </div>
     </Modal>
