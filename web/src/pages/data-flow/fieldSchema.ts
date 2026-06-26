@@ -38,8 +38,8 @@ func Process(payload []byte, topic string, metadata map[string]any) ([]byte, str
 }
 `;
 
-// script_conn 的 content 字段默认模板（对齐 listen_script.go，顶级 Run/OnMessage 函数）
-// Run：入站，产生数据推入队列；OnMessage：出站，接收队列推来的消息
+// script_conn 的 content 字段默认模板（对象式：New + Run/Close/Read/Write 函数字段）
+// 用户脚本定义带函数字段的对象，框架 reflect 取字段调用管理生命周期
 export const DEFAULT_SCRIPT_CONTENT = `package main
 
 import (
@@ -47,17 +47,44 @@ import (
 	"time"
 )
 
-// Run 入站：产生数据推入队列。返回 (data, err)，err 非 nil 会重试。
-// 签名可为 func Run() ([]byte, error) 或 func Run(context.Context) ([]byte, error)
-func Run(ctx context.Context) ([]byte, error) {
-	time.Sleep(time.Second)
-	return []byte("hello"), nil
+type myListener struct {
+	// 用户状态字段，跨调用持有（如连接、server 实例）
+
+	// 生命周期方法（函数字段，在 New 中赋值）
+	Run   func(context.Context) error
+	Close func() error
+	Read  func(context.Context) ([]byte, error)
+	Write func([]byte) error  // 可选
 }
 
-// OnMessage 出站：接收队列推来的消息。返回处理错误。
-// 如不需要出站，可省略此函数。
-func OnMessage(payload []byte) error {
-	return nil
+// New 工厂函数：框架调用此函数创建监听器对象实例
+func New() *myListener {
+	s := &myListener{}
+
+	// Run 启用：初始化资源（建连接/开端口等）。ctx 取消时必须返回。
+	s.Run = func(ctx context.Context) error {
+		// 示例：在此开启你的服务，数据通过 Read 读取
+		<-ctx.Done()
+		return nil
+	}
+
+	// Close 禁用：释放资源。Run 后调用。
+	s.Close = func() error { return nil }
+
+	// Read 入站：阻塞读取一条数据。ctx 取消时返回 (nil, ctx.Err())。
+	s.Read = func(ctx context.Context) ([]byte, error) {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(time.Second):
+		}
+		return []byte("hello"), nil
+	}
+
+	// Write 出站：写入数据到连接。可选，不实现则忽略出站。
+	s.Write = func(p []byte) error { return nil }
+
+	return s
 }
 `;
 
@@ -164,7 +191,7 @@ const listenerConnSchemas: NodeFieldSchema[] = [
       nameField(),
       topicField('topic', '入站 Topic'),
       topicField('out_topic', '出站 Topic'),
-      { key: 'content', label: '监听器脚本', type: 'script', scriptLang: 'go', fromConfig: true, default: DEFAULT_SCRIPT_CONTENT, tooltip: '脚本监听器本体脚本，定义顶级 Run（入站产生数据）和 OnMessage（出站接收消息）函数' },
+      { key: 'content', label: '监听器脚本', type: 'script', scriptLang: 'go', fromConfig: true, default: DEFAULT_SCRIPT_CONTENT, tooltip: '脚本监听器本体脚本，定义 New + Run（启用）/Close（禁用）/Read（入站）/Write（出站，可选）函数字段的对象' },
       { key: 'pre_script', label: '入站预处理脚本', type: 'script', scriptLang: 'go', default: DEFAULT_PRE_SCRIPT, tooltip: '入站消息预处理，所有 listener 共用，定义顶级 Process 函数' },
     ],
   },
