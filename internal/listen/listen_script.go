@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"reflect"
 	"sync/atomic"
 
 	"github.com/injoyai/script-gateway/internal/script"
@@ -19,6 +18,16 @@ func NewScriptListener(content string, topic string) *ScriptListener_ {
 	}
 }
 
+// ScriptListener_ 脚本监听器
+//
+// 用户脚本采用顶级函数 + 包级变量单例模式：
+//   - Run(ctx)  error              启用：初始化资源（建连接/开端口）。ctx 取消时必须返回
+//   - Close()   error              禁用：释放资源
+//   - Read(ctx) ([]byte, error)     入站：阻塞读取一条数据
+//   - Write(p)  error              出站：可选，缺失则静默丢弃
+//
+// 状态通过包级变量持有，每个 script_conn 实例对应独立 yaegi 解释器，天然隔离。
+// 框架在 Start 时 Eval 取函数并类型断言为具体 func 类型缓存，调用路径零反射开销。
 type ScriptListener_ struct {
 	content string
 	topic   string
@@ -26,8 +35,11 @@ type ScriptListener_ struct {
 	ctx     context.Context
 	cancel  context.CancelFunc
 
-	// 用户对象实例（reflect.Value，指针类型）
-	obj reflect.Value
+	// 用户脚本顶级函数（Start 时类型断言缓存，调用零反射）
+	runFn   func(context.Context) error
+	closeFn func() error
+	readFn  func(context.Context) ([]byte, error)
+	writeFn func([]byte) error  // 可选，nil 表示用户未实现
 
 	// ReadMessage 用
 	msgCh chan []byte
@@ -42,64 +54,72 @@ func (this *ScriptListener_) Start(ctx context.Context) error {
 		return fmt.Errorf("脚本编译失败: %w", err)
 	}
 
-	// 取 New 工厂函数
-	v, err := i.Eval("New")
-	if err != nil {
-		return fmt.Errorf("脚本必须定义 New 函数（返回对象实例）: %w", err)
+	// Run（启用）必须
+	if v, err := i.Eval("Run"); err != nil {
+		return fmt.Errorf("脚本必须定义 Run 函数: %w", err)
+	} else {
+		fn, ok := v.Interface().(func(context.Context) error)
+		if !ok {
+			return fmt.Errorf("Run 签名应为 func(context.Context) error, got %T", v.Interface())
+		}
+		this.runFn = fn
 	}
 
-	// reflect 调用 New() 拿对象实例
-	results := v.Call(nil)
-	if len(results) != 1 {
-		return fmt.Errorf("New 函数应返回 1 个值, got %d", len(results))
+	// Close（禁用）必须
+	if v, err := i.Eval("Close"); err != nil {
+		return fmt.Errorf("脚本必须定义 Close 函数: %w", err)
+	} else {
+		fn, ok := v.Interface().(func() error)
+		if !ok {
+			return fmt.Errorf("Close 签名应为 func() error, got %T", v.Interface())
+		}
+		this.closeFn = fn
 	}
-	this.obj = results[0]
-	if this.obj.Kind() != reflect.Ptr {
-		return fmt.Errorf("New 应返回指针类型, got %s", this.obj.Kind())
+
+	// Read（入站）必须
+	if v, err := i.Eval("Read"); err != nil {
+		return fmt.Errorf("脚本必须定义 Read 函数: %w", err)
+	} else {
+		fn, ok := v.Interface().(func(context.Context) ([]byte, error))
+		if !ok {
+			return fmt.Errorf("Read 签名应为 func(context.Context) ([]byte, error), got %T", v.Interface())
+		}
+		this.readFn = fn
+	}
+
+	// Write（出站）可选
+	if v, err := i.Eval("Write"); err == nil {
+		if fn, ok := v.Interface().(func([]byte) error); ok {
+			this.writeFn = fn
+		}
 	}
 
 	this.ctx, this.cancel = context.WithCancel(ctx)
 
-	// 取 Run 函数字段
-	runField := this.obj.Elem().FieldByName("Run")
-	if !runField.IsValid() || runField.IsNil() {
-		return fmt.Errorf("对象必须定义 Run func(context.Context) error 字段")
-	}
-
 	// 启动 Run goroutine（阻塞，ctx 取消返回）
 	go func() {
 		defer func() { _ = recover() }()
-		runField.Call([]reflect.Value{reflect.ValueOf(this.ctx)})
+		this.runFn(this.ctx)
 	}()
 
-	// 启动 Read goroutine，循环调用 obj.Read 推入 msgCh
+	// 启动 Read goroutine，循环调用 Read 推入 msgCh
 	go this.readLoop()
 
 	return nil
 }
 
 func (this *ScriptListener_) readLoop() {
-	readField := this.obj.Elem().FieldByName("Read")
-	// Read 字段缺失或为 nil，readLoop 直接退出
-	if !readField.IsValid() || readField.IsNil() {
-		return
-	}
-	ctxVal := reflect.ValueOf(this.ctx)
 	for {
 		select {
 		case <-this.ctx.Done():
 			return
 		default:
 		}
-		results, err := this.safeCall(readField, []reflect.Value{ctxVal})
+		data, err := this.safeRead()
 		if err != nil {
-			// Read panic，跳过本次继续
+			// Read panic 或返回错误，跳过本次继续
 			continue
 		}
-		if len(results) < 1 {
-			continue
-		}
-		data := this.extractBytes(results[0])
 		if len(data) == 0 {
 			continue
 		}
@@ -111,28 +131,14 @@ func (this *ScriptListener_) readLoop() {
 	}
 }
 
-// extractBytes 从 reflect.Value 提取 []byte（yaegi 映射为 []uint8）
-func (this *ScriptListener_) extractBytes(v reflect.Value) []byte {
-	if !v.IsValid() {
-		return nil
-	}
-	if v.Kind() == reflect.Interface {
-		v = v.Elem()
-	}
-	if v.Kind() == reflect.Slice && v.Type().Elem().Kind() == reflect.Uint8 {
-		return v.Bytes()
-	}
-	return nil
-}
-
-// safeCall 安全调用 reflect.Value，recover panic
-func (this *ScriptListener_) safeCall(fn reflect.Value, args []reflect.Value) (results []reflect.Value, err error) {
+// safeRead 安全调用 readFn，recover panic
+func (this *ScriptListener_) safeRead() (data []byte, err error) {
 	defer func() {
 		if r := recover(); r != nil {
-			err = fmt.Errorf("脚本方法调用 panic: %v", r)
+			err = fmt.Errorf("Read panic: %v", r)
 		}
 	}()
-	return fn.Call(args), nil
+	return this.readFn(this.ctx)
 }
 
 func (this *ScriptListener_) ReadMessage() ([]byte, error) {
@@ -148,15 +154,19 @@ func (this *ScriptListener_) ReadMessage() ([]byte, error) {
 }
 
 func (this *ScriptListener_) Write(p []byte) (int, error) {
-	if !this.obj.IsValid() {
-		return len(p), nil
-	}
-	writeField := this.obj.Elem().FieldByName("Write")
-	if !writeField.IsValid() || writeField.IsNil() {
+	if this.writeFn == nil {
 		// 用户未实现 Write，静默丢弃出站
 		return len(p), nil
 	}
-	_, err := this.safeCall(writeField, []reflect.Value{reflect.ValueOf(p)})
+	var err error
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				err = fmt.Errorf("Write panic: %v", r)
+			}
+		}()
+		err = this.writeFn(p)
+	}()
 	if err != nil {
 		return 0, err
 	}
@@ -172,13 +182,10 @@ func (this *ScriptListener_) Close() error {
 	if this.cancel != nil {
 		this.cancel()
 	}
-	// 调用用户对象的 Close 字段（存在则调，让用户释放资源）
-	if this.obj.IsValid() {
-		closeField := this.obj.Elem().FieldByName("Close")
-		if closeField.IsValid() && !closeField.IsNil() {
-			defer func() { _ = recover() }()
-			closeField.Call(nil)
-		}
+	// 调用用户 Close（让用户释放资源）
+	if this.closeFn != nil {
+		defer func() { _ = recover() }()
+		this.closeFn()
 	}
 	return nil
 }

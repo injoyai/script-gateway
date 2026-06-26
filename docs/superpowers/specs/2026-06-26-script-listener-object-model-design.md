@@ -1,6 +1,6 @@
 # 脚本监听器对象模型设计
 
-> 状态：已批准（2026-06-26）
+> 状态：已批准（2026-06-26），修订（顶级函数+单例模式）
 > 范围：仅 `script_conn` 监听器；内置监听器（http/tcp/mqtt/serial/udp）不受影响
 
 ## 1. 背景与问题
@@ -50,7 +50,9 @@ manager.go (不变)
 
 ## 4. 用户脚本接口契约
 
-> 技术实现说明：yaegi 将用户脚本类型重写为匿名 struct，**方法集在 reflect 层面不可见**（`MethodByName` 失败）。因此采用**函数字段**形式：用户在 struct 上定义函数类型字段，在 `New()` 中赋值。语义上仍是"对象持有状态 + 生命周期方法"，仅承载方式从方法定义改为函数字段赋值。
+用户脚本采用**顶级函数 + 包级变量单例**模式：定义 4 个顶级函数，通过包级变量持有跨调用状态。
+
+> 多实例隔离：每个 `script_conn` 实例对应独立 yaegi 解释器（`SafeInterpreter()` 每次新建），包级变量在该解释器实例内单例，跨实例互不影响。
 
 用户脚本必须定义：
 
@@ -59,50 +61,47 @@ package main
 
 import "context"
 
-// New 工厂函数：框架 Eval("New") 调用，返回对象实例
-func New() *myListener { return &myListener{} }
-
-type myListener struct {
-    // 用户状态字段，跨调用持有（如 *tcp.Server、连接池等）
-    srv *tcp.Server
-
-    // 生命周期方法（函数字段形式，在 New 中赋值）
-    Run   func(context.Context) error
-    Close func() error
-    Read  func(context.Context) ([]byte, error)
-    Write func([]byte) error  // 可选
-}
+// 单例状态（包级变量，跨 Run/Read/Close 调用共享）
+var server *tcp.Server
 
 // Run 启用：初始化资源（建连接/开端口）。ctx 取消时必须返回。
+func Run(ctx context.Context) error {
+    server = tcp.NewServer(":8080")
+    go server.Run()
+    <-ctx.Done()
+    return nil
+}
+
 // Close 禁用：释放资源。Run 后调用。
-// Read 入站：阻塞读取一条数据。ctx 取消时返回 (nil, ctx.Err())。
-// Write 出站：写入数据到连接。可选，不实现则 Write 静默丢弃。
-```
-
-`New` 推荐写法（用闭包共享状态）：
-
-```go
-func New() *myListener {
-    s := &myListener{}
-    s.Run = func(ctx context.Context) error {
-        s.srv = tcp.NewServer(":8080")
-        go s.srv.Run()
-        <-ctx.Done()
-        return nil
+func Close() error {
+    if server != nil {
+        return server.Close()
     }
-    s.Close = func() error { if s.srv != nil { return s.srv.Close() }; return nil }
-    s.Read = func(ctx context.Context) ([]byte, error) { return s.srv.Read() }
-    s.Write = func(p []byte) error { _, err := s.srv.Write(p); return err }
-    return s
+    return nil
+}
+
+// Read 入站：阻塞读取一条数据。ctx 取消时返回 (nil, ctx.Err())。
+func Read(ctx context.Context) ([]byte, error) {
+    return server.Read()
+}
+
+// Write 出站：写入数据到连接。可选，不实现则 Write 静默丢弃。
+func Write(p []byte) error {
+    _, err := server.Write(p)
+    return err
 }
 ```
 
 ### 约定
 
-- `New` 必须，返回任意类型指针。框架用 reflect `Call` 调用。
-- `Run` / `Close` / `Read` 字段必须存在，签名严格匹配。
-- `Write` 可选。鸭子检测：reflect `FieldByName("Write")` 为 nil 或 invalid 时，框架内置 `Write` 返回 `len(p), nil` 忽略出站。
+- `Run` / `Close` / `Read` 必须，签名严格匹配。
+- `Write` 可选。框架 `Eval("Write")` 失败则内置 `Write` 返回 `len(p), nil` 忽略出站。
+- 状态通过包级变量持有，4 个函数共享访问。
 - `pre_script` 不受影响（仍是顶级 `Process` 函数，所有 listener 共用的入站预处理）。
+
+### 性能优势
+
+框架在 `Start` 时 `Eval("Run")` 等取函数并**类型断言为具体 `func` 类型缓存**到 `ScriptListener_` 字段，之后调用路径为直接函数调用（~5ns），**零反射开销**。对比 reflect.Call（~200ns/次）提升约 40 倍，但实际瓶颈是 yaegi 解释执行用户函数体（μs-ms 级），反射占比本就 <2%，此优化主要提升代码清晰度。
 
 ## 5. 框架调用流程与错误处理
 
@@ -110,38 +109,39 @@ func New() *myListener {
 
 1. `SafeInterpreter()` 创建解释器（不带白名单，可用 lib）
 2. `Eval(content)` 编译脚本，失败返回 `"脚本编译失败: %w"`
-3. `Eval("New")` 取工厂函数，缺失返回 `"脚本必须定义 New 函数"`
-4. `reflect` 调用 `New()` 拿对象 `reflect.Value`，存 `s.obj`（指针类型）
-5. `reflect` 取 `obj.Elem().FieldByName("Run")`，缺失/invalid 返回 `"对象必须定义 Run func(context.Context) error 字段"`
-6. `go` 启动 goroutine 调用 `Run(ctx)`（阻塞，ctx 取消返回）
+3. `Eval("Run")` 取函数，类型断言为 `func(context.Context) error` 缓存到 `s.runFn`；失败返回 `"脚本必须定义 Run 函数"` 或签名错误
+4. `Eval("Close")` 断言 `func() error` → `s.closeFn`；失败返回错误
+5. `Eval("Read")` 断言 `func(context.Context) ([]byte, error)` → `s.readFn`；失败返回错误
+6. `Eval("Write")` 尝试断言 `func([]byte) error` → `s.writeFn`；失败（用户未实现）静默，`s.writeFn` 保持 nil
+7. `go` 启动 goroutine 调用 `s.runFn(ctx)`（阻塞，ctx 取消返回）
+8. `go` 启动 Read goroutine 循环调用 `s.readFn(ctx)`，结果推入 `msgCh`
 
 ### 5.2 ReadMessage()
 
-- goroutine 循环 `reflect` 调用 `obj.Elem().FieldByName("Read").Call(ctx)`，结果推入 `msgCh`
-- 阻塞直到返回数据或 ctx 取消（ctx 取消返回 `nil, io.EOF`）
+- goroutine 循环调用 `s.readFn(ctx)`，数据推入 `msgCh`
+- `ReadMessage` 从 `msgCh` 读，阻塞直到有数据或 ctx 取消（返回 `nil, io.EOF`）
 - Read panic 时 recover，跳过本次，不崩溃 pipeline
 
 ### 5.3 Write(p)
 
-- `reflect` 检测 `obj.Elem().FieldByName("Write")`
-- invalid/nil → 返回 `len(p), nil`（静默丢弃出站）
-- 有效 → 调用 `Write(p)`，返回结果
+- `s.writeFn == nil` → 返回 `len(p), nil`（静默丢弃出站）
+- 否则调用 `s.writeFn(p)`，panic 时 recover 返回错误
 
 ### 5.4 Close()
 
 - `closed.Store(true)` + `cancel()`（让 Run 的 ctx 取消）
-- `reflect` 调用 `obj.Elem().FieldByName("Close")`（存在则调，让用户释放资源）
+- 调用 `s.closeFn()`（让用户释放资源），panic recover
 
 ### 5.5 错误处理与降级
 
-- 编译 / New / 字段缺失：`Start` 返回明确错误，manager 设 `error_info`，节点显示红点。
-- Read/Write panic：recover，日志记录，继续运行（不崩溃整个 pipeline）。
+- 编译 / 函数缺失 / 签名不匹配：`Start` 返回明确错误，manager 设 `error_info`，节点显示红点。
+- Read/Write panic：recover，跳过本次，继续运行（不崩溃整个 pipeline）。
 - Run 阻塞：goroutine 跑，ctx 取消时 Run 应自行返回；框架不强制超时（Run 可能是长生命周期，如开 HTTP 服务）。
-- 旧脚本（顶级 Run/OnMessage）：Start 报 `"脚本必须定义 New 函数"`，提示用户迁移。
+- 旧脚本（`Run(ctx) ([]byte, error)` 签名）：Start 报 `"Run 签名应为 func(context.Context) error"`，提示用户迁移。
 
 ### 5.6 技术风险（已验证）
 
-经 spike 验证：yaegi 将用户脚本类型重写为匿名 struct（如 `*struct { Xstarted bool }`），**方法集 reflect 不可见**（`MethodByName` 返回 invalid）。但**函数字段 reflect 可见**（`FieldByName` 成功取到 func 类型值并可 Call）。因此采用函数字段承载方式，风险已消除。
+yaegi 对顶级函数 `Eval("Run")` 返回 `reflect.Value` of func，类型断言为具体 `func` 类型可行（旧 `listen_script.go` 已证明此模式）。**无反射调用开销**，调用路径为直接函数调用。
 
 ## 6. 前端模板
 
@@ -155,59 +155,58 @@ import (
     "time"
 )
 
-type myListener struct {
-    // 用户状态字段，跨调用持有（如连接、server 实例）
+// 单例状态（包级变量，跨 Run/Read/Close 调用共享）
+var server *exampleServer
 
-    // 生命周期方法（函数字段，在 New 中赋值）
-    Run   func(context.Context) error
-    Close func() error
-    Read  func(context.Context) ([]byte, error)
-    Write func([]byte) error  // 可选
+type exampleServer struct {
+    ch chan []byte
 }
 
-// New 工厂函数：框架调用此函数创建监听器对象实例
-func New() *myListener {
-    s := &myListener{}
+// Run 启用：初始化资源（建连接/开端口等）。ctx 取消时必须返回。
+func Run(ctx context.Context) error {
+    server = &exampleServer{ch: make(chan []byte, 10)}
+    <-ctx.Done()
+    return nil
+}
 
-    // Run 启用：初始化资源（建连接/开端口等）。ctx 取消时必须返回。
-    s.Run = func(ctx context.Context) error {
-        // 示例：在此开启你的服务，数据通过 Read 读取
-        <-ctx.Done()
-        return nil
+// Close 禁用：释放资源。Run 后调用。
+func Close() error {
+    if server != nil {
+        close(server.ch)
     }
+    return nil
+}
 
-    // Close 禁用：释放资源。Run 后调用。
-    s.Close = func() error { return nil }
-
-    // Read 入站：阻塞读取一条数据。ctx 取消时返回 (nil, ctx.Err())。
-    s.Read = func(ctx context.Context) ([]byte, error) {
-        select {
-        case <-ctx.Done():
-            return nil, ctx.Err()
-        case <-time.After(time.Second):
-        }
-        return []byte("hello"), nil
+// Read 入站：阻塞读取一条数据。ctx 取消时返回 (nil, ctx.Err())。
+func Read(ctx context.Context) ([]byte, error) {
+    select {
+    case <-ctx.Done():
+        return nil, ctx.Err()
+    case <-time.After(time.Second):
     }
+    return []byte("hello"), nil
+}
 
-    // Write 出站：写入数据到连接。可选，不实现则忽略出站。
-    s.Write = func(p []byte) error { return nil }
-
-    return s
+// Write 出站：写入数据到连接。可选，不实现则忽略出站。
+func Write(p []byte) error {
+    return nil
 }
 ```
 
-`script_conn` 的 `content` 字段 tooltip 注明"定义 New + Run/Close/Read/Write 函数字段的对象"。
+`script_conn` 的 `content` 字段 tooltip 注明"定义顶级 Run（启用）/Close（禁用）/Read（入站）/Write（出站，可选）函数 + 包级变量持有状态"。
 
 ## 7. 测试策略
 
 `internal/listen/listen_script_test.go`：
 
-1. 完整对象脚本 → Start/Read/Write/Close 全流程，验证 reflect 调用正确
-2. 缺少 New 函数 → Start 返回明确错误
-3. 缺少 Read 方法 → Start 或 ReadMessage 返回错误
-4. Write 方法缺失 → Write 静默丢弃，不报错
-5. Read panic → recover，不崩溃
-6. 旧脚本（顶级 Run/OnMessage）→ Start 报 "必须定义 New 函数"
+1. 完整生命周期 → Start/Read/Write/Close 全流程
+2. 缺少 Run 函数 → Start 返回明确错误
+3. 缺少 Close 函数 → Start 返回明确错误
+4. 缺少 Read 函数 → Start 返回明确错误
+5. Write 函数缺失 → Write 静默丢弃，不报错
+6. Write 函数存在 → 调用成功
+7. 旧脚本（`Run(ctx) ([]byte, error)` 签名）→ Start 报签名不匹配
+8. 包级变量状态共享 → Run 设置的 var 在 Close 可见（单例语义验证）
 
 ## 8. 不在本次范围
 
