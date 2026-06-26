@@ -54,6 +54,7 @@ import {
 } from '../../services/dataFlowApi';
 import { nodeTypes, type FlowNodeData } from './FlowNodes';
 import { InlineEditPanel, type EditTarget } from './InlineEditPanel';
+import { NodeEditModal, type ModalTarget } from './NodeEditModal';
 import ViewerStreamModal from './ViewerStreamModal';
 import { fetchBusynessBadges, type BusynessBadgeData } from '../../services/busynessApi';
 
@@ -535,6 +536,7 @@ const DataFlowCanvasInner: React.FC = () => {
   const [creating, setCreating] = useState(false);
   const [createMenuOpen, setCreateMenuOpen] = useState(false);
   const [viewerModalId, setViewerModalId] = useState<number | null>(null);
+  const [modalTarget, setModalTarget] = useState<ModalTarget | null>(null);
 
   const onNodesChange = useCallback((changes: any[]) => {
     onNodesChangeBase(changes);
@@ -650,29 +652,22 @@ const DataFlowCanvasInner: React.FC = () => {
   const handleEditListenerParent = useCallback((id: number) => {
     if (!flowData) return;
     const parent = flowData.parents.find((p) => p.id === id);
-    if (parent) setEditTarget({ kind: 'listenerParent', data: { ...parent } });
+    if (parent) setModalTarget({ kind: 'listenerParent', type: parent.type, mode: 'edit', node: parent });
   }, [flowData]);
 
-  const handleCreateListenerChild = useCallback(async (id: number) => {
+  const handleCreateListenerChild = useCallback((id: number) => {
     if (!flowData) return;
     const parent = flowData.parents.find((p) => p.id === id);
     if (!parent) return;
-    try {
-      const payload = parent.type === 'http_server'
-        ? { parent_id: id, name: `${parent.name}-route`, type: 'http_route', enable: true, topic: '', out_topic: '', config: JSON.stringify({ path: '/', methods: 'GET' }) }
-        : { parent_id: id, name: `${parent.name}-sub`, type: 'mqtt_subscription', enable: true, topic: '', out_topic: '', config: JSON.stringify({ sub_topic: '', qos: 0 }) };
-      await createListenerConn(payload as any);
-      message.success('已新增子项');
-      await fetchData();
-    } catch (e: any) {
-      message.error(e?.message || '新增子项失败');
-    }
-  }, [flowData, fetchData]);
+    // http_server 创建 http_route 子项；mqtt_client 创建 mqtt_subscription 子项
+    const connType = parent.type === 'http_server' ? 'http_route' : 'mqtt_subscription';
+    setModalTarget({ kind: 'listener', type: connType, mode: 'create', parentId: id });
+  }, [flowData]);
 
   const handleEditListener = useCallback((id: number) => {
     if (!flowData) return;
     const conn = flowData.conns.find(c => c.id === id);
-    if (conn) setEditTarget({ kind: 'listener', data: { ...conn } });
+    if (conn) setModalTarget({ kind: 'listener', type: conn.type, mode: 'edit', node: conn });
   }, [flowData]);
 
   const handleDeleteListener = useCallback(async (id: number) => {
@@ -802,6 +797,17 @@ const DataFlowCanvasInner: React.FC = () => {
 
   // 选择创建类型
   const handleSelectCreateOption = useCallback((opt: CreateOption) => {
+    // listener 系列走 NodeEditModal（schema 驱动完整编辑）
+    if (opt.kind === 'listenerParent') {
+      setModalTarget({ kind: 'listenerParent', type: opt.type, mode: 'create' });
+      setCreateMenuOpen(false);
+      return;
+    }
+    if (opt.kind === 'listenerConn') {
+      setModalTarget({ kind: 'listener', type: opt.type, mode: 'create', parentId: 0 });
+      setCreateMenuOpen(false);
+      return;
+    }
     setCreateOption(opt);
     createForm.resetFields();
     createForm.setFieldsValue({ name: `${opt.label.replace('新建 ', '')}-${Date.now().toString().slice(-4)}` });
@@ -1448,6 +1454,15 @@ const DataFlowCanvasInner: React.FC = () => {
       <InlineEditPanel
         target={editTarget}
         onClose={() => setEditTarget(null)}
+        onSaved={() => fetchData()}
+        onAdvancedEdit={(kind, type, node) => {
+          setEditTarget(null);
+          setModalTarget({ kind, type, mode: 'edit', node });
+        }}
+      />
+      <NodeEditModal
+        target={modalTarget}
+        onClose={() => setModalTarget(null)}
         onSaved={() => fetchData()}
       />
 
