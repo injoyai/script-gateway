@@ -132,7 +132,6 @@ const NodeCard: React.FC<{
       onMouseEnter={(e) => { e.currentTarget.style.transform = 'translateY(-1px)'; }}
       onMouseLeave={(e) => { e.currentTarget.style.transform = 'translateY(0)'; }}
     >
-      <BusynessBadge data={data.busyness} />
       {/* 头部 */}
       <div style={{
         background: accent,
@@ -148,6 +147,7 @@ const NodeCard: React.FC<{
         <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {meta.label}
         </span>
+        <BusynessBadge data={data.busyness} />
         <StatusDot enable={data.enable} running={data.running} error={data.errorInfo} />
       </div>
 
@@ -254,7 +254,6 @@ export const ListenerNode = memo(({ data, selected }: NodeProps) => {
         onMouseEnter={(e) => { e.currentTarget.style.transform = 'translateY(-1px)'; }}
         onMouseLeave={(e) => { e.currentTarget.style.transform = 'translateY(0)'; }}
       >
-        <BusynessBadge data={d.busyness} />
         {/* 头部 */}
         <div style={{
           background: meta.color,
@@ -270,6 +269,7 @@ export const ListenerNode = memo(({ data, selected }: NodeProps) => {
           <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {meta.label}
           </span>
+          <BusynessBadge data={d.busyness} />
           <StatusDot enable={d.enable} running={d.running} error={d.errorInfo} />
         </div>
 
@@ -380,7 +380,6 @@ export const ViewerNode = memo(({ data, selected }: NodeProps) => {
         onMouseEnter={(e) => { e.currentTarget.style.transform = 'translateY(-1px)'; }}
         onMouseLeave={(e) => { e.currentTarget.style.transform = 'translateY(0)'; }}
       >
-        <BusynessBadge data={d.busyness} />
         {/* 头部 */}
         <div style={{
           background: accent,
@@ -396,6 +395,7 @@ export const ViewerNode = memo(({ data, selected }: NodeProps) => {
           <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {meta.label}
           </span>
+          <BusynessBadge data={d.busyness} />
           <StatusDot enable={d.enable} running={d.enable} error={d.errorInfo} />
         </div>
 
@@ -502,7 +502,6 @@ export const MockerNode = memo(({ data, selected }: NodeProps) => {
         onMouseEnter={(e) => { e.currentTarget.style.transform = 'translateY(-1px)'; }}
         onMouseLeave={(e) => { e.currentTarget.style.transform = 'translateY(0)'; }}
       >
-        <BusynessBadge data={d.busyness} />
         {/* 头部 */}
         <div style={{
           background: accent,
@@ -518,6 +517,7 @@ export const MockerNode = memo(({ data, selected }: NodeProps) => {
           <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
             {meta.label}
           </span>
+          <BusynessBadge data={d.busyness} />
           <StatusDot enable={d.enable} running={d.running} error={d.errorInfo} />
         </div>
 
@@ -614,8 +614,9 @@ export const ListenerParentNode = memo(({ data, selected }: NodeProps) => {
               </div>
             </div>
           </div>
-          {/* 右上角：状态灯（与其他节点统一） */}
-          <div style={{ flexShrink: 0 }}>
+          {/* 右上角：队列拥挤度 + 状态灯（与其他节点统一） */}
+          <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: 6 }}>
+            <BusynessBadge data={d.busyness} />
             <StatusDot enable={d.enable} running={d.running} error={d.errorInfo} />
           </div>
         </div>

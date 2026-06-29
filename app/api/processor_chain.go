@@ -18,7 +18,16 @@ func (*ProcessorChain) List(c fbr.Ctx) {
 		c.Fail(err)
 		return
 	}
-	c.Succ(list)
+	running := pipeline.Default.RunningPipelines()
+	type chainResp struct {
+		*model.ProcessorChain
+		Running bool `json:"running"`
+	}
+	resp := make([]chainResp, len(list))
+	for i, item := range list {
+		resp[i] = chainResp{ProcessorChain: item, Running: running[item.ID]}
+	}
+	c.Succ(resp)
 }
 
 func (*ProcessorChain) Create(c fbr.Ctx) {

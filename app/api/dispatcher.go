@@ -17,7 +17,16 @@ func (*Dispatcher) List(c fbr.Ctx) {
 		c.Fail(err)
 		return
 	}
-	c.Succ(list)
+	running := pipeline.Default.RunningDispatchers()
+	type dispResp struct {
+		*model.DispatcherConfig
+		Running bool `json:"running"`
+	}
+	resp := make([]dispResp, len(list))
+	for i, item := range list {
+		resp[i] = dispResp{DispatcherConfig: item, Running: running[item.ID]}
+	}
+	c.Succ(resp)
 }
 
 func (*Dispatcher) Create(c fbr.Ctx) {

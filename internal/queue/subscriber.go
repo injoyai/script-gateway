@@ -29,11 +29,11 @@ type Subscriber struct {
 	Cap       int
 	Ch        <-chan *types.Message
 
-	ch        chan *types.Message
-	enqueued  atomic.Int64
-	dequeued  atomic.Int64
-	dropped   atomic.Int64
-	lastDrop  atomic.Int64 // unix nano，0=从未丢
+	ch       chan *types.Message
+	enqueued atomic.Int64
+	dequeued atomic.Int64
+	dropped  atomic.Int64
+	lastDrop atomic.Int64 // unix nano，0=从未丢
 
 	buckets   [windowBuckets]windowBucket
 	bucketIdx atomic.Int64 // 当前桶序号（模 windowBuckets）
@@ -59,8 +59,8 @@ func (s *Subscriber) recordEnqueue() {
 	b.mu.Unlock()
 }
 
-// recordDequeue 消费成功时调用
-func (s *Subscriber) recordDequeue() {
+// RecordDequeue 消费成功时调用
+func (s *Subscriber) RecordDequeue() {
 	s.dequeued.Add(1)
 	idx := int(s.bucketIdx.Load() % windowBuckets)
 	b := &s.buckets[idx]
@@ -123,9 +123,9 @@ type Stats struct {
 	DequeuedTotal int64    `json:"dequeued_total"`
 	DroppedTotal  int64    `json:"dropped_total"`
 	LastDropAt    int64    `json:"last_drop_at"` // unix nano，0=从未丢
-	InRate        float64  `json:"in_rate"` // 条/秒（10s 平均）
-	OutRate       float64  `json:"out_rate"` // 条/秒
-	Busyness      float64  `json:"busyness"` // 0~100
+	InRate        float64  `json:"in_rate"`      // 条/秒（10s 平均）
+	OutRate       float64  `json:"out_rate"`     // 条/秒
+	Busyness      float64  `json:"busyness"`     // 0~100
 }
 
 // Stats 返回统计快照
@@ -182,7 +182,7 @@ func (s *Subscriber) Stats() Stats {
 // Consume 消费 helper：从订阅 channel 读取消息并累加 dequeued，调用 handler
 func Consume(ch <-chan *types.Message, sub *Subscriber, handler func(*types.Message)) {
 	for msg := range ch {
-		sub.recordDequeue()
+		sub.RecordDequeue()
 		handler(msg)
 	}
 }

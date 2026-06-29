@@ -46,28 +46,25 @@ const BusynessBadge: React.FC<Props> = ({ data }) => {
     <Tooltip title={tooltipContent} placement="bottom">
       <div
         style={{
-          position: 'absolute',
-          top: -8,
-          left: -8,
           background: '#fff',
           border: `1.5px solid ${color}`,
           borderRadius: 10,
-          padding: '1px 6px',
+          padding: '0 5px',
           fontSize: 10,
           fontWeight: 600,
           color,
-          boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
-          display: 'flex',
+          lineHeight: '14px',
+          display: 'inline-flex',
           alignItems: 'center',
           gap: 3,
-          zIndex: 10,
+          flexShrink: 0,
         }}
       >
         <span
           style={{
             display: 'inline-block',
-            width: 6,
-            height: 6,
+            width: 5,
+            height: 5,
             borderRadius: '50%',
             background: color,
           }}

@@ -3,7 +3,6 @@ package api
 import (
 	"encoding/json"
 	"strings"
-	"time"
 
 	"github.com/fasthttp/websocket"
 	"github.com/injoyai/frame/fbr"
@@ -129,11 +128,13 @@ func (*Viewer) Stream(c fbr.Ctx) {
 		topics[i] = strings.TrimSpace(topics[i])
 	}
 
-	// 注意：必须在 Upgrade 之前提取客户端 IP。
+	// 注意：必须在 Upgrade 之前提取客户端 IP 与 viewer_id。
 	// Upgrade 会 hijack 连接并在新 goroutine 中执行 callback，
 	// 此时 fasthttp 的 RequestCtx 已被 release 回 sync.Pool，
 	// 在 callback 中访问 c 会导致 nil pointer dereference。
 	clientIP := remoteIP(c)
+	// viewer_id：用于把订阅者归属到对应 viewer 节点，前端徽章按此 ID 匹配
+	viewerID := c.GetInt64("viewer_id")
 
 	err := fbr.DefaultUpgrader.Upgrade(c.RequestCtx(), func(conn *websocket.Conn) {
 		defer conn.Close()
@@ -142,8 +143,7 @@ func (*Viewer) Stream(c fbr.Ctx) {
 		sub, ch := pipeline.Default.Queue().SubscribeNamed(topics, queue.SubOpts{
 			Name:      "viewer#" + clientIP,
 			OwnerType: "viewer",
-			OwnerID:   time.Now().UnixNano(),
-			Buffer:    64,
+			OwnerID:   viewerID,
 		})
 		defer pipeline.Default.Queue().UnsubscribeSub(sub)
 
@@ -151,6 +151,7 @@ func (*Viewer) Stream(c fbr.Ctx) {
 		conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"connected","topics":`+encodeTopics(topics)+`}`))
 
 		for msg := range ch {
+			sub.RecordDequeue()
 			payload, err := json.Marshal(map[string]any{
 				"type":      "message",
 				"topic":     msg.Topic,

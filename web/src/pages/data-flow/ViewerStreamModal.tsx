@@ -81,7 +81,9 @@ const ViewerStreamModal: React.FC<Props> = ({ open, viewerId, initialTopics, onC
     // 开发模式（CRA 默认 3000 端口）proxy 不支持 WebSocket，直连后端
     const isDev = window.location.port === '3000';
     const host = isDev ? '127.0.0.1:8200' : window.location.host;
-    const url = `${protocol}//${host}/api/viewer/stream?topics=${encodeURIComponent(selectedTopics.join(','))}`;
+    // 带上 viewer_id，便于后端把订阅者归属到该 viewer，前端节点徽章可正确匹配
+    const viewerIdQuery = viewerId != null ? `&viewer_id=${viewerId}` : '';
+    const url = `${protocol}//${host}/api/viewer/stream?topics=${encodeURIComponent(selectedTopics.join(','))}${viewerIdQuery}`;
 
     const ws = new WebSocket(url);
     wsRef.current = ws;
@@ -113,7 +115,7 @@ const ViewerStreamModal: React.FC<Props> = ({ open, viewerId, initialTopics, onC
       ws.close();
       wsRef.current = null;
     };
-  }, [open, selectedTopics]);
+  }, [open, selectedTopics, viewerId]);
 
   // 自动滚动
   useEffect(() => {

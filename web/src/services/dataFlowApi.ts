@@ -54,6 +54,7 @@ export interface ProcessorChainItem {
   out_topic: string; // 发布的 topic
   processors: string; // JSON 数组
   enable: boolean;
+  running?: boolean; // 运行时
 }
 
 export interface DispatcherItem {
@@ -63,6 +64,7 @@ export interface DispatcherItem {
   enable: boolean;
   topics: string; // JSON 数组，订阅的 topic 列表
   config: string; // JSON
+  running?: boolean; // 运行时
 }
 
 export interface ViewerItem {

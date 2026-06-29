@@ -23,7 +23,7 @@ func TestSubscribeNamed_PublishConsume(t *testing.T) {
 		if string(msg.Payload) != "a" {
 			t.Fatalf("payload = %s, want a", msg.Payload)
 		}
-		sub.recordDequeue()
+		sub.RecordDequeue()
 	case <-time.After(time.Second):
 		t.Fatal("recv timeout")
 	}

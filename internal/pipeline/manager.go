@@ -30,10 +30,6 @@ type httpRouteRuntime struct {
 	cfg *model.ListenerConn
 }
 
-// outboundBuffer 出站订阅 channel 的缓冲大小
-// 较大缓冲可避免目标连接写入速度较慢时拖累主消息队列
-const outboundBuffer = 1000
-
 type parentRuntime struct {
 	parent     *model.ListenerParent
 	httpServer *http.Server
@@ -167,6 +163,28 @@ func (m *Manager) RunningConns() map[int64]bool {
 		out[id] = true
 	}
 	for id := range m.cancels {
+		out[id] = true
+	}
+	return out
+}
+
+// RunningDispatchers 所有处于运行中的分发器 ID 集合
+func (m *Manager) RunningDispatchers() map[int64]bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make(map[int64]bool, len(m.dispatchers))
+	for id := range m.dispatchers {
+		out[id] = true
+	}
+	return out
+}
+
+// RunningPipelines 所有处于运行中的处理器链 ID 集合
+func (m *Manager) RunningPipelines() map[int64]bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	out := make(map[int64]bool, len(m.pipelines))
+	for id := range m.pipelines {
 		out[id] = true
 	}
 	return out
@@ -451,10 +469,9 @@ func (m *Manager) runStandaloneConnLocked(cfg *model.ListenerConn, l listen.List
 			Name:      "listener#" + cfg.Name,
 			OwnerType: "listener",
 			OwnerID:   cfg.ID,
-			Buffer:    outboundBuffer,
 		})
 		_ = sub
-		go m.writeToConn(cfg, ch, l, ctx)
+		go m.writeToConn(cfg, ch, l, ctx, sub)
 	}
 	m.listeners[cfg.ID] = l
 	m.cancels[cfg.ID] = cancel
@@ -462,7 +479,7 @@ func (m *Manager) runStandaloneConnLocked(cfg *model.ListenerConn, l listen.List
 }
 
 // writeToConn 将队列消息写入连接（出站）
-func (m *Manager) writeToConn(cfg *model.ListenerConn, ch <-chan *types.Message, l listen.Listener, ctx context.Context) {
+func (m *Manager) writeToConn(cfg *model.ListenerConn, ch <-chan *types.Message, l listen.Listener, ctx context.Context, sub *queue.Subscriber) {
 	for {
 		select {
 		case <-ctx.Done():
@@ -471,6 +488,7 @@ func (m *Manager) writeToConn(cfg *model.ListenerConn, ch <-chan *types.Message,
 			if !ok {
 				return
 			}
+			sub.RecordDequeue()
 			if _, err := l.Write(msg.Payload); err != nil {
 				logs.Errf("Write to conn %s error: %v", cfg.Name, err)
 			}
@@ -531,10 +549,9 @@ func (m *Manager) startConnWithParentLocked(parent *parentRuntime, cfg *model.Li
 				Name:      "listener#" + cfg.Name,
 				OwnerType: "listener",
 				OwnerID:   cfg.ID,
-				Buffer:    outboundBuffer,
 			})
 			_ = outSub
-			go func(client mqtt.Client, ch <-chan *types.Message, ctx context.Context) {
+			go func(client mqtt.Client, ch <-chan *types.Message, ctx context.Context, sub *queue.Subscriber) {
 				for {
 					select {
 					case <-ctx.Done():
@@ -543,11 +560,12 @@ func (m *Manager) startConnWithParentLocked(parent *parentRuntime, cfg *model.Li
 						if !ok {
 							return
 						}
+						sub.RecordDequeue()
 						token := client.Publish(mc.SubTopic, mc.QoS, false, msg.Payload)
 						token.Wait()
 					}
 				}
-			}(parent.mqttClient, outCh, ctx)
+			}(parent.mqttClient, outCh, ctx, outSub)
 		}
 	case model.ConnTypeScript:
 		l, err := createConnListener(cfg)
@@ -581,10 +599,9 @@ func (m *Manager) startConnWithParentLocked(parent *parentRuntime, cfg *model.Li
 				Name:      "listener#" + cfg.Name,
 				OwnerType: "listener",
 				OwnerID:   cfg.ID,
-				Buffer:    outboundBuffer,
 			})
 			_ = outSub
-			go m.writeToConn(cfg, outCh, l, ctx)
+			go m.writeToConn(cfg, outCh, l, ctx, outSub)
 		}
 		m.listeners[cfg.ID] = l
 	default:
@@ -670,18 +687,19 @@ func (m *Manager) StartDispatcher(cfg *model.DispatcherConfig) error {
 	}
 	topics := d.Topics()
 	if len(topics) > 0 {
-		_, ch := m.queue.SubscribeNamed(topics, queue.SubOpts{
+		sub, ch := m.queue.SubscribeNamed(topics, queue.SubOpts{
 			Name:      "dispatcher#" + cfg.Name,
 			OwnerType: "dispatcher",
 			OwnerID:   cfg.ID,
 		})
-		go func(ch <-chan *types.Message, d push.Dispatcher) {
+		go func(ch <-chan *types.Message, d push.Dispatcher, sub *queue.Subscriber) {
 			for msg := range ch {
+				sub.RecordDequeue()
 				if err := d.Push(msg); err != nil {
 					logs.Err(fmt.Sprintf("Dispatcher push error: %v", err))
 				}
 			}
-		}(ch, d)
+		}(ch, d, sub)
 	}
 	m.dispatchers[cfg.ID] = d
 	return nil
@@ -820,13 +838,14 @@ func (m *Manager) StartPipeline(cfg *model.ProcessorChain) error {
 		return err
 	}
 	if cfg.Topic != "" {
-		_, ch := m.queue.SubscribeNamed([]string{cfg.Topic}, queue.SubOpts{
+		sub, ch := m.queue.SubscribeNamed([]string{cfg.Topic}, queue.SubOpts{
 			Name:      "chain#" + cfg.Name,
 			OwnerType: "chain",
 			OwnerID:   cfg.ID,
 		})
-		go func(ch <-chan *types.Message, p *decode.Pipeline, q *queue.Queue, outTopic string) {
+		go func(ch <-chan *types.Message, p *decode.Pipeline, q *queue.Queue, outTopic string, sub *queue.Subscriber) {
 			for msg := range ch {
+				sub.RecordDequeue()
 				results, err := p.Process(msg)
 				if err != nil {
 					logs.Err(fmt.Sprintf("Pipeline process error: %v", err))
@@ -842,7 +861,7 @@ func (m *Manager) StartPipeline(cfg *model.ProcessorChain) error {
 					q.Publish(result)
 				}
 			}
-		}(ch, p, m.queue, cfg.OutTopic)
+		}(ch, p, m.queue, cfg.OutTopic, sub)
 	}
 	m.pipelines[cfg.ID] = p
 	return nil
@@ -932,8 +951,11 @@ func createPipeline(cfg *model.ProcessorChain) (*decode.Pipeline, error) {
 		Key    string `json:"key"`
 		Config string `json:"config"`
 	}
-	if err := json.Unmarshal([]byte(cfg.Processors), &procs); err != nil {
-		return nil, err
+	// processors 为空时视为无处理器，避免 json.Unmarshal 报错导致链无法启动
+	if cfg.Processors != "" {
+		if err := json.Unmarshal([]byte(cfg.Processors), &procs); err != nil {
+			return nil, err
+		}
 	}
 	var processors []decode.Processor
 	for _, p := range procs {
