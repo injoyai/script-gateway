@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { Drawer, Form, Input, Button, Space, message, Divider, Tag } from 'antd';
+import { Modal, Form, Input, Button, Space, message } from 'antd';
+import { CodeOutlined } from '@ant-design/icons';
 import {
   type ListenerParentItem,
   type ListenerConnItem,
@@ -14,6 +15,8 @@ import {
   updateViewer,
   updateMocker,
 } from '../../services/dataFlowApi';
+import useScriptEditorStore from '../../store/useScriptEditorStore';
+import { SectionTitle, TopicMultiSelect } from './FlowNodes';
 
 export type EditTarget =
   | { kind: 'listenerParent'; data: ListenerParentItem }
@@ -42,6 +45,83 @@ const parseJSON = (s?: string): any => {
 export const InlineEditPanel: React.FC<Props> = ({ target, onClose, onSaved, onAdvancedEdit }) => {
   const [form] = Form.useForm();
   const [saving, setSaving] = useState(false);
+  const openScriptEditor = useScriptEditorStore((s) => s.openEditor);
+
+  // 从处理器链的 processors 字段中提取 script 处理器的脚本内容
+  const extractChainScript = (processorsRaw?: string): { script: string; hasScript: boolean } => {
+    try {
+      const arr = JSON.parse(processorsRaw || '[]');
+      if (!Array.isArray(arr)) return { script: '', hasScript: false };
+      const scriptItem = arr.find((p: any) => p?.key === 'script');
+      if (!scriptItem) return { script: '', hasScript: false };
+      const cfg = typeof scriptItem.config === 'string' ? parseJSON(scriptItem.config) : (scriptItem.config || {});
+      return { script: cfg.script || '', hasScript: true };
+    } catch {
+      return { script: '', hasScript: false };
+    }
+  };
+
+  // 打开脚本编辑器编辑处理器链中的 script 处理器
+  const handleEditChainScript = () => {
+    if (target?.kind !== 'chain') return;
+    const d = target.data;
+    const { script, hasScript } = extractChainScript(d.processors);
+    if (!hasScript) {
+      message.warning('该处理器链未包含脚本处理器');
+      return;
+    }
+    openScriptEditor({
+      name: d.name,
+      content: script,
+      language: 'go',
+      onSave: async (newContent) => {
+        // 更新 processors 中的 script 配置
+        let arr: any[] = [];
+        try { arr = JSON.parse(d.processors || '[]'); } catch { arr = []; }
+        const idx = arr.findIndex((p: any) => p?.key === 'script');
+        if (idx < 0) return;
+        const oldCfg = typeof arr[idx].config === 'string' ? parseJSON(arr[idx].config) : (arr[idx].config || {});
+        arr[idx] = { ...arr[idx], config: JSON.stringify({ ...oldCfg, script: newContent }) };
+        const newProcessors = JSON.stringify(arr);
+        await updateProcessorChain({
+          id: d.id,
+          name: d.name,
+          topic: d.topic,
+          out_topic: d.out_topic,
+          processors: newProcessors,
+          enable: d.enable,
+        });
+        // 同步本地 target 数据，避免后续保存覆盖脚本
+        d.processors = newProcessors;
+        onSaved();
+      },
+    });
+  };
+
+  // 打开脚本编辑器编辑脚本分发器的脚本（config 字段直接存原始脚本内容）
+  const handleEditDispatcherScript = () => {
+    if (target?.kind !== 'dispatcher') return;
+    if (target.data.type !== 'script') return;
+    const d = target.data;
+    openScriptEditor({
+      name: d.name,
+      content: d.config || '',
+      language: 'go',
+      onSave: async (newContent) => {
+        await updateDispatcher({
+          id: d.id,
+          name: d.name,
+          type: d.type,
+          enable: d.enable,
+          topics: d.topics,
+          config: newContent,
+        });
+        // 同步本地 target 数据，避免后续保存覆盖脚本
+        d.config = newContent;
+        onSaved();
+      },
+    });
+  };
 
   useEffect(() => {
     if (!target) return;
@@ -74,7 +154,7 @@ export const InlineEditPanel: React.FC<Props> = ({ target, onClose, onSaved, onA
       const topics = parseJSON(d.topics);
       form.setFieldsValue({
         name: d.name,
-        topic_list: Array.isArray(topics) ? topics.join(',') : '',
+        topic_list: Array.isArray(topics) ? topics : [],
         // 常见配置字段
         url: cfg.url,
         method: cfg.method,
@@ -91,7 +171,7 @@ export const InlineEditPanel: React.FC<Props> = ({ target, onClose, onSaved, onA
       const topics = parseJSON(d.topics);
       form.setFieldsValue({
         name: d.name,
-        topic_list: Array.isArray(topics) ? topics.join(',') : '',
+        topic_list: Array.isArray(topics) ? topics : [],
       });
     } else if (target.kind === 'mocker') {
       const d = target.data;
@@ -155,28 +235,40 @@ export const InlineEditPanel: React.FC<Props> = ({ target, onClose, onSaved, onA
         });
       } else if (target.kind === 'dispatcher') {
         const d = target.data;
-        const cfg: any = {};
-        if (values.url) cfg.url = values.url;
-        if (values.method) cfg.method = values.method;
-        if (values.broker) cfg.broker = values.broker;
-        if (values.client_id) cfg.client_id = values.client_id;
-        if (values.username) cfg.username = values.username;
-        if (values.password) cfg.password = values.password;
-        if (values.pub_topic) cfg.pub_topic = values.pub_topic;
-        if (values.address) cfg.address = values.address;
-        if (values.plugin_name) cfg.plugin_name = values.plugin_name;
-        const topics = (values.topic_list || '').split(',').map((t: string) => t.trim()).filter(Boolean);
-        await updateDispatcher({
-          id: d.id,
-          name: values.name,
-          type: d.type,
-          enable: d.enable,
-          topics: JSON.stringify(topics),
-          config: JSON.stringify(cfg),
-        });
+        const topics = Array.isArray(values.topic_list) ? values.topic_list : [];
+        if (d.type === 'script') {
+          // 脚本分发器：config 直接存原始脚本，保存时保留原值（脚本通过编辑脚本按钮修改）
+          await updateDispatcher({
+            id: d.id,
+            name: values.name,
+            type: d.type,
+            enable: d.enable,
+            topics: JSON.stringify(topics),
+            config: d.config,
+          });
+        } else {
+          const cfg: any = {};
+          if (values.url) cfg.url = values.url;
+          if (values.method) cfg.method = values.method;
+          if (values.broker) cfg.broker = values.broker;
+          if (values.client_id) cfg.client_id = values.client_id;
+          if (values.username) cfg.username = values.username;
+          if (values.password) cfg.password = values.password;
+          if (values.pub_topic) cfg.pub_topic = values.pub_topic;
+          if (values.address) cfg.address = values.address;
+          if (values.plugin_name) cfg.plugin_name = values.plugin_name;
+          await updateDispatcher({
+            id: d.id,
+            name: values.name,
+            type: d.type,
+            enable: d.enable,
+            topics: JSON.stringify(topics),
+            config: JSON.stringify(cfg),
+          });
+        }
       } else if (target.kind === 'viewer') {
         const d = target.data;
-        const topics = (values.topic_list || '').split(',').map((t: string) => t.trim()).filter(Boolean);
+        const topics = Array.isArray(values.topic_list) ? values.topic_list : [];
         await updateViewer({
           id: d.id,
           name: values.name,
@@ -216,13 +308,13 @@ export const InlineEditPanel: React.FC<Props> = ({ target, onClose, onSaved, onA
   };
 
   return (
-    <Drawer
+    <Modal
       title={titleMap[target.kind]}
       open={!!target}
-      onClose={onClose}
-      width={420}
+      onCancel={onClose}
+      width={560}
       destroyOnClose
-      extra={
+      footer={
         <Space>
           {onAdvancedEdit && (target.kind === 'listenerParent' || target.kind === 'listener') && (
             <Button onClick={() => onAdvancedEdit(target.kind, target.data.type, target.data)}>
@@ -241,9 +333,7 @@ export const InlineEditPanel: React.FC<Props> = ({ target, onClose, onSaved, onA
         </Form.Item>
 
         {/* topic 路由 - 核心编辑项 */}
-        <Divider orientation="left" plain>
-          <Tag color="blue">数据流路由</Tag>
-        </Divider>
+        <SectionTitle title="数据流路由" color="blue" />
 
         {target.kind === 'listener' && (
           <>
@@ -267,18 +357,30 @@ export const InlineEditPanel: React.FC<Props> = ({ target, onClose, onSaved, onA
             <Form.Item name="out_topic" label="发布 Topic" tooltip="处理完成后默认发布到此 topic；留空则沿用处理器内部返回或原 topic">
               <Input placeholder="例如：device/cleaned" />
             </Form.Item>
+            {extractChainScript(target.data.processors).hasScript && (
+              <Button icon={<CodeOutlined />} onClick={handleEditChainScript} block>
+                编辑脚本
+              </Button>
+            )}
           </>
         )}
 
         {target.kind === 'dispatcher' && (
-          <Form.Item name="topic_list" label="订阅 Topics" tooltip="分发器订阅这些 topic，逗号分隔">
-            <Input placeholder="topic1,topic2" />
-          </Form.Item>
+          <>
+            <Form.Item name="topic_list" label="订阅 Topics" tooltip="分发器订阅这些 topic，可多选">
+              <TopicMultiSelect placeholder="选择或输入 topic" />
+            </Form.Item>
+            {target.data.type === 'script' && (
+              <Button icon={<CodeOutlined />} onClick={handleEditDispatcherScript} block>
+                编辑脚本
+              </Button>
+            )}
+          </>
         )}
 
         {target.kind === 'viewer' && (
-          <Form.Item name="topic_list" label="订阅 Topics" tooltip="查看器订阅这些 topic，逗号分隔">
-            <Input placeholder="topic1,topic2" />
+          <Form.Item name="topic_list" label="订阅 Topics" tooltip="查看器订阅这些 topic，可多选">
+            <TopicMultiSelect placeholder="选择或输入 topic" />
           </Form.Item>
         )}
 
@@ -297,9 +399,7 @@ export const InlineEditPanel: React.FC<Props> = ({ target, onClose, onSaved, onA
         )}
 
         {/* 类型特定配置 */}
-        <Divider orientation="left" plain>
-          <Tag color="purple">配置参数</Tag>
-        </Divider>
+        <SectionTitle title="配置参数" color="purple" />
 
         {target.kind === 'listener' && target.data.type === 'tcp_conn' && (
           <Form.Item name="address" label="监听地址"><Input placeholder="0.0.0.0:8080" /></Form.Item>
@@ -348,6 +448,6 @@ export const InlineEditPanel: React.FC<Props> = ({ target, onClose, onSaved, onA
           <Form.Item name="plugin_name" label="插件名"><Input /></Form.Item>
         )}
       </Form>
-    </Drawer>
+    </Modal>
   );
 };

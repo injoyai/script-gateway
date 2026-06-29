@@ -41,9 +41,8 @@ type ListenerConn struct {
 	Enable    bool      `json:"enable" xorm:"'enable'"`
 	Topic     string    `json:"topic" xorm:"'topic'"`         // 入站 topic：连接收到的数据推送到此 topic
 	OutTopic  string    `json:"out_topic" xorm:"'out_topic'"` // 出站 topic：订阅此 topic 的消息推送到连接
-	PreScript string    `json:"pre_script" xorm:"'pre_script' text"`
-	Config    string    `json:"config" xorm:"'config' text"` // JSON 配置，按 Type 区分结构
-	Extra     string    `json:"extra" xorm:"'extra' text"`   // JSON 扩展配置（分帧规则等）
+	Config    string    `json:"config" xorm:"'config' text"`  // JSON 配置，按 Type 区分结构
+	Extra     string    `json:"extra" xorm:"'extra' text"`    // JSON 扩展配置（分帧规则等）
 	CreatedAt time.Time `json:"created_at" xorm:"'created_at' created"`
 	UpdatedAt time.Time `json:"updated_at" xorm:"'updated_at' updated"`
 }

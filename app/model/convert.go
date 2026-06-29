@@ -120,7 +120,6 @@ type flatConnPayload struct {
 	Enable    bool   `json:"enable"`
 	Topic     string `json:"topic"`
 	OutTopic  string `json:"out_topic"`
-	PreScript string `json:"pre_script"`
 
 	// TCP/UDP
 	Address string `json:"address"`
@@ -149,15 +148,14 @@ func NormalizeConn(body []byte) (*ListenerConn, error) {
 	}
 
 	c := &ListenerConn{
-		ID:        flat.ID,
-		ParentID:  flat.ParentID,
-		Name:      flat.Name,
-		Type:      flat.Type,
-		Enable:    flat.Enable,
-		Topic:     flat.Topic,
-		OutTopic:  flat.OutTopic,
-		PreScript: flat.PreScript,
-		Extra:     flat.Extra,
+		ID:       flat.ID,
+		ParentID: flat.ParentID,
+		Name:     flat.Name,
+		Type:     flat.Type,
+		Enable:   flat.Enable,
+		Topic:    flat.Topic,
+		OutTopic: flat.OutTopic,
+		Extra:    flat.Extra,
 	}
 
 	// 也尝试解析顶层 config 字段（新前端）

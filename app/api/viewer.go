@@ -129,12 +129,18 @@ func (*Viewer) Stream(c fbr.Ctx) {
 		topics[i] = strings.TrimSpace(topics[i])
 	}
 
+	// 注意：必须在 Upgrade 之前提取客户端 IP。
+	// Upgrade 会 hijack 连接并在新 goroutine 中执行 callback，
+	// 此时 fasthttp 的 RequestCtx 已被 release 回 sync.Pool，
+	// 在 callback 中访问 c 会导致 nil pointer dereference。
+	clientIP := remoteIP(c)
+
 	err := fbr.DefaultUpgrader.Upgrade(c.RequestCtx(), func(conn *websocket.Conn) {
 		defer conn.Close()
 
 		// 订阅消息队列（带身份，便于 metrics 统计 WebSocket 订阅者繁忙度）
 		sub, ch := pipeline.Default.Queue().SubscribeNamed(topics, queue.SubOpts{
-			Name:      "viewer#" + remoteIP(c),
+			Name:      "viewer#" + clientIP,
 			OwnerType: "viewer",
 			OwnerID:   time.Now().UnixNano(),
 			Buffer:    64,

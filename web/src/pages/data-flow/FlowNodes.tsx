@@ -1,6 +1,6 @@
-import React, { memo } from 'react';
+import React, { memo, useEffect, useState } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
-import { Switch, Tag, Tooltip } from 'antd';
+import { Switch, Tag, Tooltip, Modal, Select } from 'antd';
 import {
   GlobalOutlined,
   SendOutlined,
@@ -10,12 +10,15 @@ import {
   FileTextOutlined,
   ThunderboltOutlined,
   DeleteOutlined,
+  EditOutlined,
   EyeOutlined,
   ExperimentOutlined,
   PlayCircleOutlined,
+  PlusOutlined,
 } from '@ant-design/icons';
 import BusynessBadge from './BusynessBadge';
 import type { BusynessBadgeData } from '../../services/busynessApi';
+import { listTopics } from '../../services/dataFlowApi';
 
 // ============ 节点数据类型 ============
 
@@ -45,6 +48,7 @@ export interface FlowNodeData {
   outTopic?: string;    // 出站 topic
   topics?: string[];    // 分发器订阅的 topics
   summary?: string;     // 摘要（端口/地址/处理器列表等）
+  multiOutput?: boolean; // 是否为多路输出（如 script 处理器 fan-out）
   children?: ChildItem[]; // 父容器内的子项列表
   onToggle?: (id: number, enable: boolean) => void;
   onEdit?: (id: number) => void;
@@ -187,7 +191,29 @@ const NodeCard: React.FC<{
         alignItems: 'center',
         justifyContent: 'space-between',
       }}>
-        <span style={{ fontSize: 10, color: '#aaa' }}>#{data.id}</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ fontSize: 10, color: '#aaa' }}>#{data.id}</span>
+          {data.onDelete && (
+            <Tooltip title="删除">
+              <DeleteOutlined
+                style={{ color: '#999', fontSize: 12, padding: 2, cursor: 'pointer' }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  Modal.confirm({
+                    title: `确认删除「${data.name}」？`,
+                    content: '删除后不可恢复，相关连线也会移除。',
+                    okText: '删除',
+                    okType: 'danger',
+                    cancelText: '取消',
+                    onOk: () => data.onDelete?.(data.id),
+                  });
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.color = '#ff4d4f'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.color = '#999'; }}
+              />
+            </Tooltip>
+          )}
+        </div>
         <Switch
           size="small"
           checked={data.enable}
@@ -409,11 +435,29 @@ export const ViewerNode = memo(({ data, selected }: NodeProps) => {
                 onClick={(e) => { e.stopPropagation(); d.onView?.(d.id); }}
               />
             </Tooltip>
-            <Tooltip title="编辑">
+            <Tooltip title="删除">
               <DeleteOutlined
-                style={{ color: '#999', fontSize: 12, padding: 2 }}
-                onClick={(e) => { e.stopPropagation(); d.onEdit?.(d.id); }}
+                style={{ color: '#999', fontSize: 12, padding: 2, cursor: 'pointer' }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  Modal.confirm({
+                    title: `确认删除「${d.name}」？`,
+                    content: '删除后不可恢复，相关连线也会移除。',
+                    okText: '删除',
+                    okType: 'danger',
+                    cancelText: '取消',
+                    onOk: () => d.onDelete?.(d.id),
+                  });
+                }}
                 onMouseEnter={(e) => { e.currentTarget.style.color = '#ff4d4f'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.color = '#999'; }}
+              />
+            </Tooltip>
+            <Tooltip title="编辑">
+              <EditOutlined
+                style={{ color: '#999', fontSize: 12, padding: 2, cursor: 'pointer' }}
+                onClick={(e) => { e.stopPropagation(); d.onEdit?.(d.id); }}
+                onMouseEnter={(e) => { e.currentTarget.style.color = '#1677ff'; }}
                 onMouseLeave={(e) => { e.currentTarget.style.color = '#999'; }}
               />
             </Tooltip>
@@ -560,7 +604,6 @@ export const ListenerParentNode = memo(({ data, selected }: NodeProps) => {
             <div style={{ minWidth: 0, flex: 1 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
                 <span style={{ fontSize: 11, fontWeight: 700, letterSpacing: 0.3, opacity: 0.9 }}>{typeLabel}</span>
-                <StatusDot enable={d.enable} running={d.running} error={d.errorInfo} />
               </div>
               <div
                 style={{ fontSize: 14, fontWeight: 700, lineHeight: 1.2, cursor: 'pointer', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
@@ -571,19 +614,9 @@ export const ListenerParentNode = memo(({ data, selected }: NodeProps) => {
               </div>
             </div>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
-            <button
-              type="button"
-              style={{ height: 24, padding: '0 10px', borderRadius: 999, border: '1px solid rgba(255,255,255,0.35)', background: 'rgba(255,255,255,0.14)', color: '#fff', cursor: 'pointer', fontSize: 11, fontWeight: 600 }}
-              onClick={() => d.onCreateChild?.(d.id)}
-            >
-              + 新增
-            </button>
-            <Switch
-              size="small"
-              checked={d.enable}
-              onChange={(checked, e) => { e.stopPropagation(); d.onToggle?.(d.id, checked); }}
-            />
+          {/* 右上角：状态灯（与其他节点统一） */}
+          <div style={{ flexShrink: 0 }}>
+            <StatusDot enable={d.enable} running={d.running} error={d.errorInfo} />
           </div>
         </div>
         {d.summary && (
@@ -593,11 +626,11 @@ export const ListenerParentNode = memo(({ data, selected }: NodeProps) => {
         )}
       </div>
 
-      {/* 子项列表区 */}
-      <div style={{ flex: 1, padding: '8px 10px', overflow: 'auto', display: 'flex', flexDirection: 'column', gap: 4 }}>
+      {/* 子项列表区（不允许滚动条，所有子项全部显示） */}
+      <div style={{ flex: 1, padding: '8px 10px', overflow: 'visible', display: 'flex', flexDirection: 'column', gap: 4 }}>
         {children.length === 0 ? (
           <div style={{ textAlign: 'center', color: '#bbb', fontSize: 12, padding: '16px 0' }}>
-            暂无子项，点击右上角"+ 新增"添加
+            暂无子项，点击下方「+」添加
           </div>
         ) : (
           children.map((child) => {
@@ -660,6 +693,55 @@ export const ListenerParentNode = memo(({ data, selected }: NodeProps) => {
           })
         )}
       </div>
+
+      {/* 底部操作栏（与其他节点一致：操作放下方） */}
+      <div style={{
+        padding: '6px 14px',
+        borderTop: '1px solid rgba(0,0,0,0.06)',
+        background: '#fff',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        gap: 8,
+        flexShrink: 0,
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          {d.onDelete && (
+            <Tooltip title="删除">
+              <DeleteOutlined
+                style={{ color: '#999', fontSize: 12, padding: 2, cursor: 'pointer' }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  Modal.confirm({
+                    title: `确认删除「${d.name}」？`,
+                    content: '删除父容器将级联清理其下所有子项，不可恢复。',
+                    okText: '删除',
+                    okType: 'danger',
+                    cancelText: '取消',
+                    onOk: () => d.onDelete?.(d.id),
+                  });
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.color = '#ff4d4f'; }}
+                onMouseLeave={(e) => { e.currentTarget.style.color = '#999'; }}
+              />
+            </Tooltip>
+          )}
+          <Tooltip title="新增子项">
+            <PlusOutlined
+              style={{ color: '#1677ff', fontSize: 13, padding: 2, cursor: 'pointer' }}
+              onClick={(e) => { e.stopPropagation(); d.onCreateChild?.(d.id); }}
+              onMouseEnter={(e) => { e.currentTarget.style.color = '#0958d9'; }}
+              onMouseLeave={(e) => { e.currentTarget.style.color = '#1677ff'; }}
+            />
+          </Tooltip>
+        </div>
+        <Switch
+          size="small"
+          checked={d.enable}
+          onChange={(checked, e) => { e.stopPropagation(); d.onToggle?.(d.id, checked); }}
+          onClick={(_, e) => e.stopPropagation()}
+        />
+      </div>
     </div>
   );
 });
@@ -671,4 +753,69 @@ export const nodeTypes = {
   dispatcher: DispatcherNode,
   viewer: ViewerNode,
   mocker: MockerNode,
+};
+
+// ============ 表单分区标题（用于新建/编辑弹窗） ============
+// 替代 Divider + Tag 的组合，更精致克制的视觉分割
+export const SectionTitle: React.FC<{ title: string; color?: 'blue' | 'purple' }> = ({ title, color = 'blue' }) => {
+  const accent = color === 'purple' ? '#722ed1' : '#1677ff';
+  return (
+    <div style={{
+      display: 'flex',
+      alignItems: 'center',
+      gap: 8,
+      marginTop: 20,
+      marginBottom: 12,
+      paddingBottom: 8,
+      borderBottom: '1px solid #f0f0f0',
+    }}>
+      <span style={{
+        width: 3,
+        height: 14,
+        background: accent,
+        borderRadius: 2,
+        flexShrink: 0,
+      }} />
+      <span style={{
+        fontSize: 13,
+        fontWeight: 500,
+        color: '#262626',
+        letterSpacing: 0.3,
+      }}>
+        {title}
+      </span>
+    </div>
+  );
+};
+
+// ============ 订阅 Topics 多选下拉 ============
+// 从后端拉取当前可用 topic 列表，支持多选；允许手动输入未列出的 topic
+export const TopicMultiSelect: React.FC<{ value?: string[]; onChange?: (v: string[]) => void; placeholder?: string }> = ({ value, onChange, placeholder }) => {
+  const [options, setOptions] = useState<{ label: string; value: string }[]>([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const list = await listTopics();
+        if (cancelled) return;
+        setOptions(list.map((t) => ({ label: `${t.topic} (深度 ${t.depth})`, value: t.topic })));
+      } catch {
+        // 拉取失败时保持空选项，用户仍可手动输入
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  return (
+    <Select
+      mode="tags"
+      value={value}
+      onChange={onChange}
+      placeholder={placeholder || '选择或输入 topic'}
+      options={options}
+      tokenSeparators={[',']}
+      style={{ width: '100%' }}
+    />
+  );
 };

@@ -41,22 +41,9 @@ interface ListenerItem {
 
 const DEFAULT_SCRIPT = `package main
 
-import "fmt"
-
-// Run 入站函数（必须定义，或定义 OnMessage）
-// 循环调用，返回的数据推入入站 Topic
-// 返回 nil, nil 表示本次无数据产生
 func Run() ([]byte, error) {
-	fmt.Println("脚本监听运行中")
 	return nil, nil
 }
-
-// OnMessage 出站函数（可选）
-// 当出站 Topic 收到消息时调用
-// func OnMessage(payload []byte) error {
-// 	fmt.Printf("收到出站消息: %s\\n", payload)
-// 	return nil
-// }
 `;
 
 const ScriptListener: React.FC = () => {

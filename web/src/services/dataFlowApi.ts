@@ -113,6 +113,14 @@ export const updateListenerParent = async (payload: Partial<ListenerParentItem> 
   });
 };
 
+export const deleteListenerParent = async (id: number): Promise<void> => {
+  await fetch(`${API_BASE}/listener-parent/delete`, {
+    method: 'DELETE',
+    headers: jsonHeaders,
+    body: JSON.stringify({ id }),
+  });
+};
+
 // ---- ListenerConn ----
 export const listListenerConns = async (): Promise<ListenerConnItem[]> => {
   const res = await fetch(`${API_BASE}/listener-conn/list`);
@@ -177,6 +185,14 @@ export const updateProcessorChain = async (payload: Partial<ProcessorChainItem> 
   });
 };
 
+export const deleteProcessorChain = async (id: number): Promise<void> => {
+  await fetch(`${API_BASE}/processor_chain/delete`, {
+    method: 'DELETE',
+    headers: jsonHeaders,
+    body: JSON.stringify({ id }),
+  });
+};
+
 // ---- Dispatcher ----
 export const listDispatchers = async (): Promise<DispatcherItem[]> => {
   const res = await fetch(`${API_BASE}/dispatcher/list`);
@@ -202,6 +218,14 @@ export const updateDispatcher = async (payload: Partial<DispatcherItem> & { id: 
     method: 'PUT',
     headers: jsonHeaders,
     body: JSON.stringify(payload),
+  });
+};
+
+export const deleteDispatcher = async (id: number): Promise<void> => {
+  await fetch(`${API_BASE}/dispatcher/delete`, {
+    method: 'DELETE',
+    headers: jsonHeaders,
+    body: JSON.stringify({ id }),
   });
 };
 
@@ -234,7 +258,11 @@ export const updateViewer = async (payload: Partial<ViewerItem> & { id: number }
 };
 
 export const deleteViewer = async (id: number): Promise<void> => {
-  await fetch(`${API_BASE}/viewer/delete?id=${id}`, { method: 'DELETE' });
+  await fetch(`${API_BASE}/viewer/delete`, {
+    method: 'DELETE',
+    headers: jsonHeaders,
+    body: JSON.stringify({ id }),
+  });
 };
 
 export const listTopics = async (): Promise<{ topic: string; depth: number }[]> => {

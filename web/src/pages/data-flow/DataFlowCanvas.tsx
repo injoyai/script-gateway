@@ -18,7 +18,7 @@ import {
   ConnectionMode,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { Button, Space, Spin, message, Input, Tag, Tooltip, Empty, Modal, Form, Divider } from 'antd';
+import { Button, Space, Spin, message, Input, Tag, Tooltip, Empty, Modal, Form } from 'antd';
 import {
   ReloadOutlined,
   LayoutOutlined,
@@ -27,6 +27,7 @@ import {
   ThunderboltOutlined,
   SendOutlined,
   PlusOutlined,
+  CodeOutlined,
 } from '@ant-design/icons';
 import {
   createListenerConn,
@@ -34,6 +35,10 @@ import {
   createProcessorChain,
   createDispatcher,
   deleteListenerConn,
+  deleteListenerParent,
+  deleteProcessorChain,
+  deleteDispatcher,
+  deleteViewer,
   fetchAllFlowData,
   getFlowLayout,
   saveFlowLayout,
@@ -52,11 +57,31 @@ import {
   updateDispatcher,
   type FlowData,
 } from '../../services/dataFlowApi';
-import { nodeTypes, type FlowNodeData } from './FlowNodes';
+import { nodeTypes, type FlowNodeData, SectionTitle, TopicMultiSelect } from './FlowNodes';
 import { InlineEditPanel, type EditTarget } from './InlineEditPanel';
 import { NodeEditModal, type ModalTarget } from './NodeEditModal';
 import ViewerStreamModal from './ViewerStreamModal';
 import { fetchBusynessBadges, type BusynessBadgeData } from '../../services/busynessApi';
+import useScriptEditorStore from '../../store/useScriptEditorStore';
+import { DEFAULT_SCRIPT_CONTENT } from './fieldSchema';
+
+// 脚本处理器链默认模板（与 AGENTS.md 第 1 条一致，最简骨架）
+const DEFAULT_CHAIN_SCRIPT = `package main
+
+func Deal(payload []byte) (map[string]any, error) {
+\treturn map[string]any{
+\t\t"": payload,
+\t}, nil
+}
+`;
+
+// 脚本分发器默认模板（函数 Forward，签名 func(interface{}) error）
+const DEFAULT_DISPATCHER_SCRIPT = `package main
+
+func Forward(payload interface{}) error {
+\treturn nil
+}
+`;
 
 // ============ 工具函数 ============
 
@@ -132,12 +157,16 @@ const buildGraph = (data: FlowData, callbacks: {
   onToggleChain: (id: number, enable: boolean) => void;
   onToggleDispatcher: (id: number, enable: boolean) => void;
   onEditListenerParent: (id: number) => void;
+  onDeleteListenerParent: (id: number) => void;
   onCreateListenerChild: (id: number) => void;
   onEditListener: (id: number) => void;
   onEditChain: (id: number) => void;
+  onDeleteChain: (id: number) => void;
   onEditDispatcher: (id: number) => void;
+  onDeleteDispatcher: (id: number) => void;
   onToggleViewer: (id: number, enable: boolean) => void;
   onEditViewer: (id: number) => void;
+  onDeleteViewer: (id: number) => void;
   onViewViewer: (id: number) => void;
   onToggleMocker: (id: number, enable: boolean) => void;
   onEditMocker: (id: number) => void;
@@ -162,6 +191,7 @@ const buildGraph = (data: FlowData, callbacks: {
   const childRowHeight = 32;
   const childRowGap = 4;
   const listPadding = 16;
+  const footerHeight = 34; // 底部操作栏（删除 + 新增 + Switch）
 
   // 记录每个子项的 source 信息：{ sourceId, sourceHandle?, topic }
   const listenerSources: { parentId: string; childId: number; topic: string; standalone?: boolean }[] = [];
@@ -171,7 +201,7 @@ const buildGraph = (data: FlowData, callbacks: {
     const parentId = `listener-parent-${parent.id}`;
     const childCount = Math.max(1, childConns.length);
     const listHeight = childCount * childRowHeight + Math.max(0, childCount - 1) * childRowGap + listPadding;
-    const parentHeight = Math.max(headerHeight + 48, headerHeight + listHeight);
+    const parentHeight = headerHeight + listHeight + footerHeight;
 
     // 构建子项数据
     const childrenData = childConns.map((conn) => ({
@@ -203,6 +233,7 @@ const buildGraph = (data: FlowData, callbacks: {
         onToggle: callbacks.onToggleListenerParent,
         onEdit: callbacks.onEditListenerParent,
         onCreateChild: callbacks.onCreateListenerChild,
+        onDelete: callbacks.onDeleteListenerParent,
         onToggleChild: callbacks.onToggleListener,
         onEditChild: callbacks.onEditListener,
         onDeleteChild: callbacks.onDeleteListener,
@@ -257,6 +288,11 @@ const buildGraph = (data: FlowData, callbacks: {
   const chainNodes: { id: string; topic: string; outTopic?: string }[] = [];
   for (const chain of data.chains) {
     const summary = buildSummary('chain', '', chain);
+    let multiOutput = false;
+    try {
+      const procs = JSON.parse(chain.processors || '[]');
+      multiOutput = Array.isArray(procs) && procs.some((p: any) => p?.key === 'script');
+    } catch {}
     const nodeData: FlowNodeData = {
       kind: 'chain',
       id: chain.id,
@@ -265,9 +301,11 @@ const buildGraph = (data: FlowData, callbacks: {
       enable: chain.enable,
       topic: chain.topic,
       outTopic: chain.out_topic,
+      multiOutput,
       summary,
       onToggle: callbacks.onToggleChain,
       onEdit: callbacks.onEditChain,
+      onDelete: callbacks.onDeleteChain,
     };
     const nodeId = `chain-${chain.id}`;
     nodes.push({
@@ -296,6 +334,7 @@ const buildGraph = (data: FlowData, callbacks: {
       summary,
       onToggle: callbacks.onToggleDispatcher,
       onEdit: callbacks.onEditDispatcher,
+      onDelete: callbacks.onDeleteDispatcher,
     };
     const nodeId = `dispatcher-${disp.id}`;
     nodes.push({
@@ -314,17 +353,18 @@ const buildGraph = (data: FlowData, callbacks: {
     const topicList = Array.isArray(topics) ? topics : [];
     const summary = topicList.length > 0 ? `订阅 ${topicList.length} 个 topic` : '未订阅';
     const nodeData: FlowNodeData = {
-      kind: 'viewer',
-      id: viewer.id,
-      name: viewer.name,
-      type: 'viewer',
-      enable: viewer.enable,
-      topics: topicList,
-      summary,
-      onToggle: callbacks.onToggleViewer,
-      onEdit: callbacks.onEditViewer,
-      onView: callbacks.onViewViewer,
-    };
+        kind: 'viewer',
+        id: viewer.id,
+        name: viewer.name,
+        type: 'viewer',
+        enable: viewer.enable,
+        topics: topicList,
+        summary,
+        onToggle: callbacks.onToggleViewer,
+        onEdit: callbacks.onEditViewer,
+        onDelete: callbacks.onDeleteViewer,
+        onView: callbacks.onViewViewer,
+      };
     const nodeId = `viewer-${viewer.id}`;
     nodes.push({
       id: nodeId,
@@ -503,6 +543,7 @@ const CREATE_OPTIONS: CreateOption[] = [
   { key: 'conn-script', label: '脚本监听', kind: 'listenerConn', type: 'script_conn', group: '独立监听器' },
   // 处理器链
   { key: 'chain', label: '处理器链', kind: 'chain', type: 'chain', group: '处理器链' },
+  { key: 'chain-script', label: '脚本处理器链', kind: 'chain', type: 'script_chain', group: '处理器链' },
   // 分发器
   { key: 'disp-http', label: 'HTTP 分发器', kind: 'dispatcher', type: 'http', group: '分发器' },
   { key: 'disp-mqtt', label: 'MQTT 分发器', kind: 'dispatcher', type: 'mqtt', group: '分发器' },
@@ -537,6 +578,13 @@ const DataFlowCanvasInner: React.FC = () => {
   const [createMenuOpen, setCreateMenuOpen] = useState(false);
   const [viewerModalId, setViewerModalId] = useState<number | null>(null);
   const [modalTarget, setModalTarget] = useState<ModalTarget | null>(null);
+  // 脚本处理器链新建时的脚本草稿（点击「编辑脚本」按钮保存的内容；为空则使用默认模板）
+  const [chainScriptDraft, setChainScriptDraft] = useState<string>('');
+  // 脚本监听器新建时的脚本草稿
+  const [connScriptDraft, setConnScriptDraft] = useState<string>('');
+  // 脚本分发器新建时的脚本草稿
+  const [dispScriptDraft, setDispScriptDraft] = useState<string>('');
+  const openScriptEditor = useScriptEditorStore((s) => s.openEditor);
 
   const onNodesChange = useCallback((changes: any[]) => {
     onNodesChangeBase(changes);
@@ -655,6 +703,15 @@ const DataFlowCanvasInner: React.FC = () => {
     if (parent) setModalTarget({ kind: 'listenerParent', type: parent.type, mode: 'edit', node: parent });
   }, [flowData]);
 
+  const handleDeleteListenerParent = useCallback(async (id: number) => {
+    try {
+      await deleteListenerParent(id);
+      await fetchData();
+    } catch (e: any) {
+      message.error(e?.message || '删除失败');
+    }
+  }, [fetchData]);
+
   const handleCreateListenerChild = useCallback((id: number) => {
     if (!flowData) return;
     const parent = flowData.parents.find((p) => p.id === id);
@@ -726,7 +783,7 @@ const DataFlowCanvasInner: React.FC = () => {
           if (values.port) cfg.port = values.port;
           if (values.baud_rate) cfg.baud_rate = Number(values.baud_rate);
         } else if (createOption.type === 'script_conn') {
-          if (values.content) cfg.content = values.content;
+          cfg.content = connScriptDraft || DEFAULT_SCRIPT_CONTENT;
         }
         await createListenerConn({
           parent_id: 0,
@@ -738,38 +795,55 @@ const DataFlowCanvasInner: React.FC = () => {
           config: JSON.stringify(cfg),
         } as any);
       } else if (createOption.kind === 'chain') {
-        await createProcessorChain({
+        const payload: any = {
           name: values.name,
           topic: values.topic || '',
           out_topic: values.out_topic || '',
           enable: false,
-        } as any);
-      } else if (createOption.kind === 'dispatcher') {
-        const cfg: any = {};
-        if (createOption.type === 'http') {
-          if (values.url) cfg.url = values.url;
-          if (values.method) cfg.method = values.method;
-        } else if (createOption.type === 'mqtt') {
-          if (values.broker) cfg.broker = values.broker;
-          if (values.client_id) cfg.client_id = values.client_id;
-          if (values.username) cfg.username = values.username;
-          if (values.password) cfg.password = values.password;
-          if (values.pub_topic) cfg.pub_topic = values.pub_topic;
-        } else if (createOption.type === 'websocket') {
-          if (values.address) cfg.address = values.address;
-        } else if (createOption.type === 'plugin') {
-          if (values.plugin_name) cfg.plugin_name = values.plugin_name;
+        };
+        if (createOption.type === 'script_chain') {
+          payload.processors = JSON.stringify([
+            { key: 'script', config: JSON.stringify({ script: chainScriptDraft || DEFAULT_CHAIN_SCRIPT }) },
+          ]);
         }
-        const topics = (values.topic_list || '').split(',').map((t: string) => t.trim()).filter(Boolean);
-        await createDispatcher({
-          name: values.name,
-          type: createOption.type,
-          enable: false,
-          topics: JSON.stringify(topics),
-          config: JSON.stringify(cfg),
-        } as any);
+        await createProcessorChain(payload);
+      } else if (createOption.kind === 'dispatcher') {
+        const topics = Array.isArray(values.topic_list) ? values.topic_list : [];
+        if (createOption.type === 'script') {
+          // 脚本分发器：config 字段直接存原始脚本内容
+          await createDispatcher({
+            name: values.name,
+            type: createOption.type,
+            enable: false,
+            topics: JSON.stringify(topics),
+            config: dispScriptDraft || DEFAULT_DISPATCHER_SCRIPT,
+          } as any);
+        } else {
+          const cfg: any = {};
+          if (createOption.type === 'http') {
+            if (values.url) cfg.url = values.url;
+            if (values.method) cfg.method = values.method;
+          } else if (createOption.type === 'mqtt') {
+            if (values.broker) cfg.broker = values.broker;
+            if (values.client_id) cfg.client_id = values.client_id;
+            if (values.username) cfg.username = values.username;
+            if (values.password) cfg.password = values.password;
+            if (values.pub_topic) cfg.pub_topic = values.pub_topic;
+          } else if (createOption.type === 'websocket') {
+            if (values.address) cfg.address = values.address;
+          } else if (createOption.type === 'plugin') {
+            if (values.plugin_name) cfg.plugin_name = values.plugin_name;
+          }
+          await createDispatcher({
+            name: values.name,
+            type: createOption.type,
+            enable: false,
+            topics: JSON.stringify(topics),
+            config: JSON.stringify(cfg),
+          } as any);
+        }
       } else if (createOption.kind === 'viewer') {
-        const topics = (values.topic_list || '').split(',').map((t: string) => t.trim()).filter(Boolean);
+        const topics = Array.isArray(values.topic_list) ? values.topic_list : [];
         await createViewer({
           name: values.name,
           enable: false,
@@ -787,13 +861,16 @@ const DataFlowCanvasInner: React.FC = () => {
       message.success('创建成功');
       setCreateMenuOpen(false);
       setCreateOption(null);
+      setChainScriptDraft('');
+      setConnScriptDraft('');
+      setDispScriptDraft('');
       await fetchData();
     } catch (e: any) {
       message.error(e?.message || '创建失败');
     } finally {
       setCreating(false);
     }
-  }, [createOption, createForm, fetchData]);
+  }, [createOption, createForm, fetchData, chainScriptDraft, connScriptDraft, dispScriptDraft]);
 
   // 选择创建类型
   const handleSelectCreateOption = useCallback((opt: CreateOption) => {
@@ -811,7 +888,49 @@ const DataFlowCanvasInner: React.FC = () => {
     setCreateOption(opt);
     createForm.resetFields();
     createForm.setFieldsValue({ name: `${opt.label.replace('新建 ', '')}-${Date.now().toString().slice(-4)}` });
+    setChainScriptDraft('');
+    setConnScriptDraft('');
+    setDispScriptDraft('');
   }, [createForm]);
+
+  // 新建脚本处理器链时，编辑初始脚本内容（草稿，创建时一起提交）
+  const handleEditCreateChainScript = useCallback(() => {
+    openScriptEditor({
+      name: '脚本处理器链草稿',
+      content: chainScriptDraft || DEFAULT_CHAIN_SCRIPT,
+      language: 'go',
+      onSave: async (newContent) => {
+        setChainScriptDraft(newContent);
+        message.success('脚本草稿已保存，创建节点时将使用此脚本');
+      },
+    });
+  }, [chainScriptDraft, openScriptEditor]);
+
+  // 新建脚本监听器时，编辑初始脚本内容（草稿，创建时一起提交）
+  const handleEditCreateConnScript = useCallback(() => {
+    openScriptEditor({
+      name: '脚本监听器草稿',
+      content: connScriptDraft || DEFAULT_SCRIPT_CONTENT,
+      language: 'go',
+      onSave: async (newContent) => {
+        setConnScriptDraft(newContent);
+        message.success('脚本草稿已保存，创建节点时将使用此脚本');
+      },
+    });
+  }, [connScriptDraft, openScriptEditor]);
+
+  // 新建脚本分发器时，编辑初始脚本内容（草稿，创建时一起提交）
+  const handleEditCreateDispScript = useCallback(() => {
+    openScriptEditor({
+      name: '脚本分发器草稿',
+      content: dispScriptDraft || DEFAULT_DISPATCHER_SCRIPT,
+      language: 'go',
+      onSave: async (newContent) => {
+        setDispScriptDraft(newContent);
+        message.success('脚本草稿已保存，创建节点时将使用此脚本');
+      },
+    });
+  }, [dispScriptDraft, openScriptEditor]);
 
   const handleEditChain = useCallback((id: number) => {
     if (!flowData) return;
@@ -819,11 +938,29 @@ const DataFlowCanvasInner: React.FC = () => {
     if (chain) setEditTarget({ kind: 'chain', data: { ...chain } });
   }, [flowData]);
 
+  const handleDeleteChain = useCallback(async (id: number) => {
+    try {
+      await deleteProcessorChain(id);
+      await fetchData();
+    } catch (e: any) {
+      message.error(e?.message || '删除失败');
+    }
+  }, [fetchData]);
+
   const handleEditDispatcher = useCallback((id: number) => {
     if (!flowData) return;
     const disp = flowData.dispatchers.find(d => d.id === id);
     if (disp) setEditTarget({ kind: 'dispatcher', data: { ...disp } });
   }, [flowData]);
+
+  const handleDeleteDispatcher = useCallback(async (id: number) => {
+    try {
+      await deleteDispatcher(id);
+      await fetchData();
+    } catch (e: any) {
+      message.error(e?.message || '删除失败');
+    }
+  }, [fetchData]);
 
   const handleToggleViewer = useCallback(async (id: number, enable: boolean) => {
     try {
@@ -839,6 +976,15 @@ const DataFlowCanvasInner: React.FC = () => {
     const viewer = flowData.viewers?.find(v => v.id === id);
     if (viewer) setEditTarget({ kind: 'viewer', data: { ...viewer } });
   }, [flowData]);
+
+  const handleDeleteViewer = useCallback(async (id: number) => {
+    try {
+      await deleteViewer(id);
+      await fetchData();
+    } catch (e: any) {
+      message.error(e?.message || '删除失败');
+    }
+  }, [fetchData]);
 
   const handleViewViewer = useCallback((id: number) => {
     setViewerModalId(id);
@@ -989,12 +1135,16 @@ const DataFlowCanvasInner: React.FC = () => {
       onToggleChain: handleToggleChain,
       onToggleDispatcher: handleToggleDispatcher,
       onEditListenerParent: handleEditListenerParent,
+      onDeleteListenerParent: handleDeleteListenerParent,
       onCreateListenerChild: handleCreateListenerChild,
       onEditListener: handleEditListener,
       onEditChain: handleEditChain,
+      onDeleteChain: handleDeleteChain,
       onEditDispatcher: handleEditDispatcher,
+      onDeleteDispatcher: handleDeleteDispatcher,
       onToggleViewer: handleToggleViewer,
       onEditViewer: handleEditViewer,
+      onDeleteViewer: handleDeleteViewer,
       onViewViewer: handleViewViewer,
       onToggleMocker: handleToggleMocker,
       onEditMocker: handleEditMocker,
@@ -1082,7 +1232,7 @@ const DataFlowCanvasInner: React.FC = () => {
 
     setNodes(ns);
     setEdges(es);
-  }, [flowData, search, highlightTopic, handleToggleListenerParent, handleToggleListener, handleToggleChain, handleToggleDispatcher, handleEditListenerParent, handleCreateListenerChild, handleEditListener, handleEditChain, handleEditDispatcher, handleToggleViewer, handleEditViewer, handleViewViewer, handleToggleMocker, handleEditMocker, handleTriggerMocker, handleDeleteMocker, handleDeleteListener, setNodes, setEdges]);
+  }, [flowData, search, highlightTopic, handleToggleListenerParent, handleToggleListener, handleToggleChain, handleToggleDispatcher, handleEditListenerParent, handleCreateListenerChild, handleEditListener, handleEditChain, handleEditDispatcher, handleToggleViewer, handleEditViewer, handleViewViewer, handleToggleMocker, handleEditMocker, handleTriggerMocker, handleDeleteMocker, handleDeleteChain, handleDeleteDispatcher, handleDeleteListener, setNodes, setEdges]);
 
   // 收集所有 topic 用于筛选
   const allTopics = useMemo(() => {
@@ -1301,7 +1451,7 @@ const DataFlowCanvasInner: React.FC = () => {
         ] : [
           <Button key="cancel" onClick={() => setCreateMenuOpen(false)}>取消</Button>,
         ]}
-        width={460}
+        width={560}
         destroyOnClose
       >
         {!createOption ? (
@@ -1335,37 +1485,67 @@ const DataFlowCanvasInner: React.FC = () => {
 
             {createOption.kind === 'chain' && (
               <>
-                <Divider orientation="left" plain><Tag color="blue">数据流路由</Tag></Divider>
+                <SectionTitle title="数据流路由" color="blue" />
                 <Form.Item name="topic" label="订阅 Topic" tooltip="处理器链订阅此 topic 的消息进行处理">
                   <Input placeholder="例如：device/data" />
                 </Form.Item>
-                <Form.Item name="out_topic" label="发布 Topic" tooltip="处理完成后默认发布到此 topic">
-                  <Input placeholder="例如：device/cleaned" />
+                <Form.Item name="out_topic" label="发布 Topic" tooltip={createOption.type === 'script_chain' ? '脚本处理器链可由脚本动态决定输出 topic，这里可留空' : '处理完成后默认发布到此 topic'}>
+                  <Input placeholder={createOption.type === 'script_chain' ? '脚本动态决定时可留空' : '例如：device/cleaned'} />
                 </Form.Item>
+                {createOption.type === 'script_chain' && (
+                  <>
+                    <div style={{ marginTop: -8, marginBottom: 8, color: '#8c8c8c', fontSize: 12 }}>
+                      可点击下方「编辑脚本」按钮编写处理逻辑；若不编辑，将使用默认模板创建。
+                    </div>
+                    <Button
+                      icon={<CodeOutlined />}
+                      onClick={handleEditCreateChainScript}
+                      block
+                      style={{ marginBottom: 8 }}
+                    >
+                      {chainScriptDraft ? '编辑脚本（已编辑）' : '编辑脚本'}
+                    </Button>
+                  </>
+                )}
               </>
             )}
 
             {createOption.kind === 'dispatcher' && (
               <>
-                <Divider orientation="left" plain><Tag color="blue">数据流路由</Tag></Divider>
-                <Form.Item name="topic_list" label="订阅 Topics" tooltip="分发器订阅这些 topic，逗号分隔">
-                  <Input placeholder="topic1,topic2" />
+                <SectionTitle title="数据流路由" color="blue" />
+                <Form.Item name="topic_list" label="订阅 Topics" tooltip="分发器订阅这些 topic，可多选">
+                  <TopicMultiSelect placeholder="选择或输入 topic" />
                 </Form.Item>
+                {createOption.type === 'script' && (
+                  <>
+                    <div style={{ marginTop: -8, marginBottom: 8, color: '#8c8c8c', fontSize: 12 }}>
+                      可点击下方「编辑脚本」按钮编写分发逻辑；若不编辑，将使用默认模板创建。
+                    </div>
+                    <Button
+                      icon={<CodeOutlined />}
+                      onClick={handleEditCreateDispScript}
+                      block
+                      style={{ marginBottom: 8 }}
+                    >
+                      {dispScriptDraft ? '编辑脚本（已编辑）' : '编辑脚本'}
+                    </Button>
+                  </>
+                )}
               </>
             )}
 
             {createOption.kind === 'viewer' && (
               <>
-                <Divider orientation="left" plain><Tag color="blue">订阅配置</Tag></Divider>
-                <Form.Item name="topic_list" label="订阅 Topics" tooltip="查看器订阅这些 topic，逗号分隔">
-                  <Input placeholder="topic1,topic2" />
+                <SectionTitle title="订阅配置" color="blue" />
+                <Form.Item name="topic_list" label="订阅 Topics" tooltip="查看器订阅这些 topic，可多选">
+                  <TopicMultiSelect placeholder="选择或输入 topic" />
                 </Form.Item>
               </>
             )}
 
             {createOption.kind === 'mocker' && (
               <>
-                <Divider orientation="left" plain><Tag color="purple">虚拟数据</Tag></Divider>
+                <SectionTitle title="虚拟数据" color="purple" />
                 <Form.Item name="topic" label="目标 Topic" rules={[{ required: true, message: '请输入目标 topic' }]} tooltip="虚拟数据将发布到此 topic">
                   <Input placeholder="例如：device/mock" />
                 </Form.Item>
@@ -1378,7 +1558,7 @@ const DataFlowCanvasInner: React.FC = () => {
               </>
             )}
 
-            <Divider orientation="left" plain><Tag color="purple">配置参数</Tag></Divider>
+            <SectionTitle title="配置参数" color="purple" />
 
             {createOption.kind === 'listenerParent' && createOption.type === 'http_server' && (
               <Form.Item name="port" label="端口"><Input placeholder="8080" /></Form.Item>
@@ -1416,7 +1596,7 @@ const DataFlowCanvasInner: React.FC = () => {
 
             {createOption.kind === 'listenerConn' && (
               <>
-                <Divider orientation="left" plain><Tag color="blue">数据流路由</Tag></Divider>
+                <SectionTitle title="数据流路由" color="blue" />
                 <Form.Item name="topic" label="入站 Topic" tooltip="连接收到的数据推送到此 topic">
                   <Input placeholder="例如：device/data" />
                 </Form.Item>
@@ -1442,9 +1622,19 @@ const DataFlowCanvasInner: React.FC = () => {
               </>
             )}
             {createOption.kind === 'listenerConn' && createOption.type === 'script_conn' && (
-              <Form.Item name="content" label="脚本内容" rules={[{ required: true, message: '请输入脚本内容' }]}>
-                <Input.TextArea rows={4} placeholder="脚本内容" />
-              </Form.Item>
+              <>
+                <div style={{ marginTop: -8, marginBottom: 8, color: '#8c8c8c', fontSize: 12 }}>
+                  可点击下方「编辑脚本」按钮编写监听逻辑；若不编辑，将使用默认模板创建。
+                </div>
+                <Button
+                  icon={<CodeOutlined />}
+                  onClick={handleEditCreateConnScript}
+                  block
+                  style={{ marginBottom: 8 }}
+                >
+                  {connScriptDraft ? '编辑脚本（已编辑）' : '编辑脚本'}
+                </Button>
+              </>
             )}
           </Form>
         )}

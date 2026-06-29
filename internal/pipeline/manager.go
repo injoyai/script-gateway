@@ -23,13 +23,11 @@ import (
 	"github.com/injoyai/script-gateway/internal/plugin"
 	"github.com/injoyai/script-gateway/internal/push"
 	"github.com/injoyai/script-gateway/internal/queue"
-	"github.com/injoyai/script-gateway/internal/script"
 	"github.com/injoyai/script-gateway/internal/types"
 )
 
 type httpRouteRuntime struct {
 	cfg *model.ListenerConn
-	pre *script.PreProcessor
 }
 
 // outboundBuffer 出站订阅 channel 的缓冲大小
@@ -298,7 +296,7 @@ func (m *Manager) StartParent(cfg *model.ListenerParent) error {
 			msg.Metadata["path"] = r.URL.Path
 			msg.Metadata["method"] = r.Method
 			msg.Metadata["remote_addr"] = r.RemoteAddr
-			m.forwardSingleMessage(route.cfg, route.pre, msg)
+			m.forwardSingleMessage(route.cfg, msg)
 			w.WriteHeader(http.StatusOK)
 		})
 		rt.httpServer = server
@@ -418,7 +416,6 @@ func (m *Manager) StartConn(cfg *model.ListenerConn) error {
 }
 
 func (m *Manager) runStandaloneConnLocked(cfg *model.ListenerConn, l listen.Listener) error {
-	pre, _ := script.NewPreProcessor(cfg.PreScript)
 	ctx, cancel := context.WithCancel(context.Background())
 
 	// Start：初始化监听器（建立连接、绑定端口等）
@@ -444,7 +441,7 @@ func (m *Manager) runStandaloneConnLocked(cfg *model.ListenerConn, l listen.List
 			}
 			msg := types.NewMessage(data, cfg.Topic)
 			msg.Metadata["source"] = strings.TrimSuffix(cfg.Type, "_conn")
-			m.processAndPublish(cfg, pre, msg)
+			m.processAndPublish(cfg, msg)
 		}
 	}()
 
@@ -481,8 +478,8 @@ func (m *Manager) writeToConn(cfg *model.ListenerConn, ch <-chan *types.Message,
 	}
 }
 
-// processAndPublish 处理单条消息：分帧 → 预处理 → 发布到消息总线
-func (m *Manager) processAndPublish(cfg *model.ListenerConn, pre *script.PreProcessor, msg *types.Message) {
+// processAndPublish 处理单条消息：分帧 → 发布到消息总线
+func (m *Manager) processAndPublish(cfg *model.ListenerConn, msg *types.Message) {
 	framing := parseFraming(cfg.Extra)
 	frames := m.applyFraming(cfg.ID, msg, framing)
 	for _, frame := range frames {
@@ -493,23 +490,11 @@ func (m *Manager) processAndPublish(cfg *model.ListenerConn, pre *script.PreProc
 		msg2.Metadata["conn_id"] = cfg.ID
 		msg2.Metadata["conn_type"] = cfg.Type
 		msg2.Metadata["parent_id"] = cfg.ParentID
-		out := msg2
-		if pre != nil {
-			processed, pass, err := pre.Process(msg2)
-			if err != nil {
-				logs.Errf("Conn %s pre_script error: %v", cfg.Name, err)
-			} else if !pass {
-				continue
-			} else if processed != nil {
-				out = processed
-			}
-		}
-		m.queue.Publish(out)
+		m.queue.Publish(msg2)
 	}
 }
 
 func (m *Manager) startConnWithParentLocked(parent *parentRuntime, cfg *model.ListenerConn) error {
-	pre, _ := script.NewPreProcessor(cfg.PreScript)
 	ctx, cancel := context.WithCancel(context.Background())
 	m.cancels[cfg.ID] = cancel
 	switch cfg.Type {
@@ -518,7 +503,7 @@ func (m *Manager) startConnWithParentLocked(parent *parentRuntime, cfg *model.Li
 			delete(m.cancels, cfg.ID)
 			return fmt.Errorf("http parent not ready")
 		}
-		parent.httpRoutes[cfg.ID] = &httpRouteRuntime{cfg: cfg, pre: pre}
+		parent.httpRoutes[cfg.ID] = &httpRouteRuntime{cfg: cfg}
 	case model.ConnTypeMQTTSub:
 		var mc model.MQTTSubConfig
 		_ = json.Unmarshal([]byte(cfg.Config), &mc)
@@ -533,7 +518,7 @@ func (m *Manager) startConnWithParentLocked(parent *parentRuntime, cfg *model.Li
 			}
 			m2.Metadata["source"] = "mqtt"
 			m2.Metadata["mqtt_topic"] = msg.Topic()
-			m.forwardSingleMessage(cfg, pre, m2)
+			m.forwardSingleMessage(cfg, m2)
 		})
 		if token.Wait() && token.Error() != nil {
 			delete(m.cancels, cfg.ID)
@@ -588,7 +573,7 @@ func (m *Manager) startConnWithParentLocked(parent *parentRuntime, cfg *model.Li
 				}
 				msg := types.NewMessage(data, cfg.Topic)
 				msg.Metadata["source"] = "script"
-				m.processAndPublish(cfg, pre, msg)
+				m.processAndPublish(cfg, msg)
 			}
 		}()
 		if cfg.OutTopic != "" {
@@ -609,23 +594,11 @@ func (m *Manager) startConnWithParentLocked(parent *parentRuntime, cfg *model.Li
 	return nil
 }
 
-func (m *Manager) forwardSingleMessage(cfg *model.ListenerConn, pre *script.PreProcessor, msg *types.Message) {
+func (m *Manager) forwardSingleMessage(cfg *model.ListenerConn, msg *types.Message) {
 	msg.Metadata["conn_id"] = cfg.ID
 	msg.Metadata["conn_type"] = cfg.Type
 	msg.Metadata["parent_id"] = cfg.ParentID
-	out := msg
-	if pre != nil {
-		processed, pass, err := pre.Process(msg)
-		if err == nil {
-			if !pass {
-				return
-			}
-			if processed != nil {
-				out = processed
-			}
-		}
-	}
-	m.queue.Publish(out)
+	m.queue.Publish(msg)
 }
 
 func (m *Manager) StopConn(id int64) {

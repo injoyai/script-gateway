@@ -114,7 +114,7 @@ export const NodeEditModal: React.FC<Props> = ({ target, onClose, onSaved }) => 
       cancelButtonProps={{ disabled: saving }}
       destroyOnClose
       maskClosable={false}
-      width={640}
+      width={560}
     >
       {!target ? null : !schema ? (
         <Empty description="该类型暂不支持高级编辑" />

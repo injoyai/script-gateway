@@ -1,0 +1,10 @@
+/docs/*
+/data/*
+/plugins/*
+/web/build/*
+/web/node_modules/*
+/web/package-lock.json
+.idea
+*.py
+*.exe
+*.go~

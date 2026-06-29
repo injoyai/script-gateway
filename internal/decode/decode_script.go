@@ -40,9 +40,9 @@ type Decoder interface {
 }
 
 // ScriptProcessor 执行脚本处理器。
-// 脚本必须定义 Process 函数：
+// 脚本必须定义 Deal 函数：
 //
-//	func Process(payload []byte) (map[string]any, error)
+//	func Deal(payload []byte) (map[string]any, error)
 //
 // 返回值约定：
 //
@@ -79,13 +79,13 @@ func (p *ScriptProcessor) compile() error {
 	if _, err := itp.Eval(p.content); err != nil {
 		return fmt.Errorf("compile script processor: %w", err)
 	}
-	v, err := itp.Eval("Process")
+	v, err := itp.Eval("Deal")
 	if err != nil {
-		return fmt.Errorf("script processor must define `Process` function: %w", err)
+		return fmt.Errorf("script processor must define `Deal` function: %w", err)
 	}
 	fn, ok := v.Interface().(func([]byte) (map[string]any, error))
 	if !ok {
-		return fmt.Errorf("script processor `Process` signature mismatch, expect func([]byte) (map[string]any, error)")
+		return fmt.Errorf("script processor `Deal` signature mismatch, expect func([]byte) (map[string]any, error)")
 	}
 	p.processFn = fn
 	p.compiled = true
