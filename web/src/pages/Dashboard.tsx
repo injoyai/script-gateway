@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import ReactECharts from 'echarts-for-react';
 import { Spin, Tooltip } from 'antd';
 import {
@@ -56,14 +56,32 @@ const Dashboard: React.FC = () => {
     active_dispatchers: 0,
     metrics: {},
   });
-  const [tick, setTick] = useState(0);
+  // 实时吞吐量滑动窗口：每 10s 采样一次，保留最近 30 个点（约 5 分钟）
+  const WINDOW_SIZE = 30;
+  const POLL_INTERVAL = 10000;
+  const [throughputHistory, setThroughputHistory] = useState<{ ts: number; value: number }[]>([]);
+  const prevMsgRef = useRef<{ total: number; ts: number } | null>(null);
 
   const fetchSystemInfo = async () => {
     try {
       const res = await fetch(`${API_BASE}/monitor/system`);
       const data = await res.json();
       if (data.code === 0 || data.code === 200) {
-        setSystemInfo(data.data || {});
+        const info = data.data || {};
+        setSystemInfo(info);
+        // 基于累计消息数差值计算实时吞吐量（条/秒）
+        const total: number = info.metrics?.['counter.system.total_messages'] || 0;
+        const now = Date.now();
+        const prev = prevMsgRef.current;
+        if (prev) {
+          const dt = (now - prev.ts) / 1000;
+          const rate = dt > 0 ? Math.max(0, (total - prev.total) / dt) : 0;
+          setThroughputHistory((h) => {
+            const next = [...h, { ts: now, value: Math.round(rate) }];
+            return next.length > WINDOW_SIZE ? next.slice(next.length - WINDOW_SIZE) : next;
+          });
+        }
+        prevMsgRef.current = { total, ts: now };
       }
     } catch {
       // 降级
@@ -74,8 +92,7 @@ const Dashboard: React.FC = () => {
     fetchSystemInfo();
     const timer = setInterval(() => {
       fetchSystemInfo();
-      setTick((t) => t + 1);
-    }, 10000);
+    }, POLL_INTERVAL);
     return () => clearInterval(timer);
   }, []);
 
@@ -83,14 +100,12 @@ const Dashboard: React.FC = () => {
   const activeListeners = systemInfo.active_listeners || 0;
   const activeDispatchers = systemInfo.active_dispatchers || 0;
 
-  // 动态吞吐量曲线
-  const throughputData = Array.from({ length: 24 }, (_, i) => {
-    const base = 200 + Math.sin((i + tick) * 0.4) * 90 + Math.cos((i + tick) * 0.7) * 50;
-    return Math.max(0, Math.floor(base + Math.random() * 60));
+  // 真实吞吐量曲线（来自累计消息数差值）
+  const throughputData = throughputHistory.map((p) => p.value);
+  const xLabels = throughputHistory.map((p) => {
+    const d = new Date(p.ts);
+    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`;
   });
-  const xLabels = Array.from({ length: 24 }, (_, i) =>
-    `${String((new Date().getHours() - 23 + i + 24) % 24).padStart(2, '0')}时`
-  );
 
   const baseTextStyle = {
     fontFamily: 'Manrope, "LXGW WenKai", sans-serif',
@@ -222,8 +237,10 @@ const Dashboard: React.FC = () => {
     return { color: 'var(--pine)', bg: 'var(--pine-soft)' };
   };
 
-  const avg = Math.round(throughputData.reduce((a, b) => a + b, 0) / throughputData.length);
-  const peak = Math.max(...throughputData);
+  const avg = throughputData.length > 0
+    ? Math.round(throughputData.reduce((a, b) => a + b, 0) / throughputData.length)
+    : 0;
+  const peak = throughputData.length > 0 ? Math.max(...throughputData) : 0;
 
   return (
     <Spin spinning={loading}>
@@ -356,7 +373,7 @@ const Dashboard: React.FC = () => {
             }}
           >
             <div>
-              <div className="sg-eyebrow">最近 24 小时</div>
+              <div className="sg-eyebrow">实时采样 · 每 10 秒一次</div>
               <div
                 style={{
                   fontFamily: 'var(--font-display)',
@@ -382,7 +399,13 @@ const Dashboard: React.FC = () => {
               </span>
             </div>
           </div>
-          <ReactECharts option={throughputOption} style={{ height: 280 }} />
+          {throughputData.length === 0 ? (
+            <div style={{ height: 280, display: 'grid', placeItems: 'center', color: 'var(--ink-3)', fontFamily: 'var(--font-han)', fontSize: 13 }}>
+              正在采集实时数据，请稍候…
+            </div>
+          ) : (
+            <ReactECharts option={throughputOption} style={{ height: 280 }} />
+          )}
         </div>
 
         <div

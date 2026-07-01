@@ -14,6 +14,7 @@ const (
 	ConnTypeScript    = "script_conn"
 	ConnTypeHTTPRoute = "http_route"
 	ConnTypeMQTTSub   = "mqtt_subscription"
+	ConnTypePlugin    = "plugin"
 )
 
 // DispatcherConfig 类型常量
@@ -40,6 +41,7 @@ var ValidConnTypes = []string{
 	ConnTypeScript,
 	ConnTypeHTTPRoute,
 	ConnTypeMQTTSub,
+	ConnTypePlugin,
 }
 
 // 所有合法的 Dispatcher 类型

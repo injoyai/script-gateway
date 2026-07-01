@@ -18,7 +18,7 @@ import {
   ConnectionMode,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { Button, Space, Spin, message, Input, Tag, Tooltip, Empty, Modal, Form } from 'antd';
+import { Button, Space, Spin, message, Input, InputNumber, Tag, Tooltip, Empty, Modal, Form, Select, Switch } from 'antd';
 import {
   ReloadOutlined,
   LayoutOutlined,
@@ -64,6 +64,13 @@ import ViewerStreamModal from './ViewerStreamModal';
 import { fetchBusynessBadges, type BusynessBadgeData } from '../../services/busynessApi';
 import useScriptEditorStore from '../../store/useScriptEditorStore';
 import { DEFAULT_SCRIPT_CONTENT } from './fieldSchema';
+import { listPluginsByType, type PluginInfo, type PluginParamSpec } from '../../services/pluginApi';
+import {
+  PROCESSOR_TYPES,
+  findProcessorType,
+  buildDefaultConfig,
+  serializeSingleProcessor,
+} from './processorSchema';
 
 // 脚本处理器链默认模板（与 AGENTS.md 第 1 条一致，最简骨架）
 const DEFAULT_CHAIN_SCRIPT = `package main
@@ -475,9 +482,11 @@ const buildGraph = (data: FlowData, callbacks: {
   }
 
   // 链 -> 链/分发器/查看器
+  // 注意：只有显式设置了 out_topic 的链才画输出连线
+  // 未设置 out_topic 时不画线（即便处理器内部可能回退到输入 topic，UI 上以显式配置为准）
   for (const cn of chainNodes) {
-    const publishTopic = cn.outTopic || cn.topic;
-    if (!publishTopic) continue;
+    if (!cn.outTopic) continue;
+    const publishTopic = cn.outTopic;
     const downstreamChains = topicToChains.get(publishTopic) || [];
     for (const targetChainId of downstreamChains) {
       if (targetChainId === cn.id) continue;
@@ -543,9 +552,11 @@ const CREATE_OPTIONS: CreateOption[] = [
   { key: 'conn-udp', label: 'UDP 监听', kind: 'listenerConn', type: 'udp_conn', group: '独立监听器' },
   { key: 'conn-serial', label: '串口监听', kind: 'listenerConn', type: 'serial_conn', group: '独立监听器' },
   { key: 'conn-script', label: '脚本监听', kind: 'listenerConn', type: 'script_conn', group: '独立监听器' },
+  { key: 'conn-plugin', label: '插件监听', kind: 'listenerConn', type: 'plugin', group: '独立监听器' },
   // 处理器链
   { key: 'chain', label: '处理器链', kind: 'chain', type: 'chain', group: '处理器链' },
   { key: 'chain-script', label: '脚本处理器链', kind: 'chain', type: 'script_chain', group: '处理器链' },
+  { key: 'chain-plugin', label: '插件处理器链', kind: 'chain', type: 'plugin_chain', group: '处理器链' },
   // 分发器
   { key: 'disp-http', label: 'HTTP 分发器', kind: 'dispatcher', type: 'http', group: '分发器' },
   { key: 'disp-mqtt', label: 'MQTT 分发器', kind: 'dispatcher', type: 'mqtt', group: '分发器' },
@@ -586,7 +597,38 @@ const DataFlowCanvasInner: React.FC = () => {
   const [connScriptDraft, setConnScriptDraft] = useState<string>('');
   // 脚本分发器新建时的脚本草稿
   const [dispScriptDraft, setDispScriptDraft] = useState<string>('');
+  // 内置处理器链新建时选择的处理器类型 + 配置草稿
+  const [builtinProcKey, setBuiltinProcKey] = useState<string>('');
+  const [builtinProcConfig, setBuiltinProcConfig] = useState<Record<string, any>>({});
+  // 插件容器新建时选择的插件 + 配置草稿
+  const [pluginName, setPluginName] = useState<string>('');
+  const [pluginParams, setPluginParams] = useState<Record<string, any>>({});
+  const [listenerPlugins, setListenerPlugins] = useState<PluginInfo[]>([]);
+  const [processorPlugins, setProcessorPlugins] = useState<PluginInfo[]>([]);
+  const [pusherPlugins, setPusherPlugins] = useState<PluginInfo[]>([]);
   const openScriptEditor = useScriptEditorStore((s) => s.openEditor);
+  const loadPluginLists = useCallback(async () => {
+    try {
+      const [listeners, processors, pushers] = await Promise.all([
+        listPluginsByType('listener'),
+        listPluginsByType('processor'),
+        listPluginsByType('pusher'),
+      ]);
+      setListenerPlugins(listeners || []);
+      setProcessorPlugins(processors || []);
+      setPusherPlugins(pushers || []);
+    } catch (e: any) {
+      console.error('[DataFlowCanvas] 加载插件列表失败:', e);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadPluginLists();
+  }, [loadPluginLists]);
+
+  const currentListenerPluginSpecs = (listenerPlugins.find((p) => p.name === pluginName)?.params || []) as PluginParamSpec[];
+  const currentProcessorPluginSpecs = (processorPlugins.find((p) => p.name === pluginName)?.params || []) as PluginParamSpec[];
+  const currentPusherPluginSpecs = (pusherPlugins.find((p) => p.name === pluginName)?.params || []) as PluginParamSpec[];
 
   const onNodesChange = useCallback((changes: any[]) => {
     onNodesChangeBase(changes);
@@ -786,6 +828,13 @@ const DataFlowCanvasInner: React.FC = () => {
           if (values.baud_rate) cfg.baud_rate = Number(values.baud_rate);
         } else if (createOption.type === 'script_conn') {
           cfg.content = connScriptDraft || DEFAULT_SCRIPT_CONTENT;
+        } else if (createOption.type === 'plugin') {
+          if (!pluginName) {
+            message.error('请选择插件');
+            return;
+          }
+          cfg.plugin_name = pluginName;
+          cfg.params = pluginParams;
         }
         await createListenerConn({
           parent_id: 0,
@@ -807,6 +856,21 @@ const DataFlowCanvasInner: React.FC = () => {
           payload.processors = JSON.stringify([
             { key: 'script', config: JSON.stringify({ script: chainScriptDraft || DEFAULT_CHAIN_SCRIPT }) },
           ]);
+        } else if (createOption.type === 'plugin_chain') {
+          if (!pluginName) {
+            message.error('请选择插件');
+            return;
+          }
+          payload.processors = JSON.stringify([
+            { key: 'plugin', config: JSON.stringify({ plugin_name: pluginName, params: pluginParams }) },
+          ]);
+        } else if (createOption.type === 'chain') {
+          // 内置处理器链：必须已选处理器类型
+          if (!builtinProcKey) {
+            message.error('请选择处理器类型');
+            return;
+          }
+          payload.processors = serializeSingleProcessor(builtinProcKey, builtinProcConfig);
         }
         await createProcessorChain(payload);
       } else if (createOption.kind === 'dispatcher') {
@@ -866,13 +930,15 @@ const DataFlowCanvasInner: React.FC = () => {
       setChainScriptDraft('');
       setConnScriptDraft('');
       setDispScriptDraft('');
+      setBuiltinProcKey('');
+      setBuiltinProcConfig({});
       await fetchData();
     } catch (e: any) {
       message.error(e?.message || '创建失败');
     } finally {
       setCreating(false);
     }
-  }, [createOption, createForm, fetchData, chainScriptDraft, connScriptDraft, dispScriptDraft]);
+  }, [createOption, createForm, fetchData, chainScriptDraft, connScriptDraft, dispScriptDraft, builtinProcKey, builtinProcConfig]);
 
   // 选择创建类型
   const handleSelectCreateOption = useCallback((opt: CreateOption) => {
@@ -893,6 +959,8 @@ const DataFlowCanvasInner: React.FC = () => {
     setChainScriptDraft('');
     setConnScriptDraft('');
     setDispScriptDraft('');
+    setBuiltinProcKey('');
+    setBuiltinProcConfig({});
   }, [createForm]);
 
   // 新建脚本处理器链时，编辑初始脚本内容（草稿，创建时一起提交）
@@ -1509,6 +1577,61 @@ const DataFlowCanvasInner: React.FC = () => {
                     </Button>
                   </>
                 )}
+                {createOption.type === 'chain' && (
+                  <>
+                    <Form.Item label="处理器类型" required tooltip="一个容器只选一个处理器；多个处理请在数据流上串联多个容器">
+                      <Select
+                        placeholder="选择内置处理器"
+                        value={builtinProcKey || undefined}
+                        onChange={(key) => {
+                          setBuiltinProcKey(key);
+                          setBuiltinProcConfig(buildDefaultConfig(key));
+                        }}
+                        options={PROCESSOR_TYPES.map((p) => ({ label: p.name, value: p.key }))}
+                      />
+                    </Form.Item>
+                    {builtinProcKey && findProcessorType(builtinProcKey) && (
+                      <div style={{ padding: '8px 12px', background: '#fafafa', border: '1px solid #f0f0f0', borderRadius: 4, marginBottom: 8 }}>
+                        {findProcessorType(builtinProcKey)!.fields.map((f) => (
+                          <Form.Item
+                            key={f.key}
+                            label={f.label}
+                            tooltip={f.tooltip}
+                            required={f.required}
+                            style={{ marginBottom: 8 }}
+                          >
+                            {f.type === 'switch' ? (
+                              <Switch
+                                checked={!!builtinProcConfig[f.key]}
+                                onChange={(checked) => setBuiltinProcConfig((c) => ({ ...c, [f.key]: checked }))}
+                              />
+                            ) : f.type === 'textarea' ? (
+                              <Input.TextArea
+                                rows={3}
+                                placeholder={f.placeholder}
+                                value={builtinProcConfig[f.key] ?? ''}
+                                onChange={(e) => setBuiltinProcConfig((c) => ({ ...c, [f.key]: e.target.value }))}
+                              />
+                            ) : f.type === 'json' ? (
+                              <Input.TextArea
+                                rows={3}
+                                placeholder={f.placeholder || '{}'}
+                                value={typeof builtinProcConfig[f.key] === 'string' ? builtinProcConfig[f.key] : JSON.stringify(builtinProcConfig[f.key] || {}, null, 2)}
+                                onChange={(e) => setBuiltinProcConfig((c) => ({ ...c, [f.key]: e.target.value }))}
+                              />
+                            ) : (
+                              <Input
+                                placeholder={f.placeholder}
+                                value={builtinProcConfig[f.key] ?? ''}
+                                onChange={(e) => setBuiltinProcConfig((c) => ({ ...c, [f.key]: e.target.value }))}
+                              />
+                            )}
+                          </Form.Item>
+                        ))}
+                      </div>
+                    )}
+                  </>
+                )}
               </>
             )}
 
@@ -1593,7 +1716,56 @@ const DataFlowCanvasInner: React.FC = () => {
               <Form.Item name="address" label="地址"><Input placeholder="ws://127.0.0.1:8080/ws" /></Form.Item>
             )}
             {createOption.kind === 'dispatcher' && createOption.type === 'plugin' && (
-              <Form.Item name="plugin_name" label="插件名"><Input /></Form.Item>
+              <>
+                <Form.Item name="plugin_name" label="插件名" rules={[{ required: true, message: '请选择插件' }]}>
+                  <Select
+                    placeholder="选择 pusher 插件"
+                    options={pusherPlugins.map((p) => ({ value: p.name, label: p.display || p.name }))}
+                    onChange={(name) => {
+                      setPluginName(name);
+                      const p = pusherPlugins.find((x) => x.name === name);
+                      const defaults: Record<string, any> = {};
+                      for (const spec of p?.params || []) defaults[spec.key] = spec.default;
+                      setPluginParams(defaults);
+                    }}
+                    notFoundContent={pusherPlugins.length === 0 ? '暂无已加载的 pusher 插件' : undefined}
+                  />
+                </Form.Item>
+                {pluginName && currentPusherPluginSpecs.length > 0 && (
+                  <div style={{ padding: '8px 12px', background: '#fafafa', border: '1px solid #f0f0f0', borderRadius: 4 }}>
+                    {currentPusherPluginSpecs.map((spec) => (
+                      <Form.Item key={spec.key} label={spec.label || spec.key} tooltip={spec.description} required={spec.required} style={{ marginBottom: 8 }}>
+                        {spec.type === 'int' || spec.type === 'number' || spec.type === 'float' ? (
+                          <InputNumber
+                            value={pluginParams[spec.key]}
+                            min={spec.min}
+                            max={spec.max}
+                            onChange={(v) => setPluginParams((c) => ({ ...c, [spec.key]: v }))}
+                            style={{ width: '100%' }}
+                          />
+                        ) : spec.type === 'bool' ? (
+                          <Switch
+                            checked={!!pluginParams[spec.key]}
+                            onChange={(v) => setPluginParams((c) => ({ ...c, [spec.key]: v }))}
+                          />
+                        ) : spec.type === 'select' ? (
+                          <Select
+                            value={pluginParams[spec.key]}
+                            onChange={(v) => setPluginParams((c) => ({ ...c, [spec.key]: v }))}
+                            options={(spec.options || []).map((o) => ({ value: o, label: o }))}
+                            allowClear
+                          />
+                        ) : (
+                          <Input
+                            value={pluginParams[spec.key] ?? ''}
+                            onChange={(e) => setPluginParams((c) => ({ ...c, [spec.key]: e.target.value }))}
+                          />
+                        )}
+                      </Form.Item>
+                    ))}
+                  </div>
+                )}
+              </>
             )}
 
             {createOption.kind === 'listenerConn' && (
@@ -1605,6 +1777,112 @@ const DataFlowCanvasInner: React.FC = () => {
                 <Form.Item name="out_topic" label="出站 Topic" tooltip="订阅此 topic 的消息推送到连接">
                   <Input placeholder="留空则不订阅出站消息" />
                 </Form.Item>
+              </>
+            )}
+
+            {createOption.kind === 'listenerConn' && createOption.type === 'plugin' && (
+              <>
+                <Form.Item name="plugin_name" label="插件名" rules={[{ required: true, message: '请选择插件' }]}>
+                  <Select
+                    placeholder="选择 listener 插件"
+                    options={listenerPlugins.map((p) => ({ value: p.name, label: p.display || p.name }))}
+                    onChange={(name) => {
+                      setPluginName(name);
+                      const p = listenerPlugins.find((x) => x.name === name);
+                      const defaults: Record<string, any> = {};
+                      for (const spec of p?.params || []) defaults[spec.key] = spec.default;
+                      setPluginParams(defaults);
+                    }}
+                    notFoundContent={listenerPlugins.length === 0 ? '暂无已加载的 listener 插件' : undefined}
+                  />
+                </Form.Item>
+                {pluginName && currentListenerPluginSpecs.length > 0 && (
+                  <div style={{ padding: '8px 12px', background: '#fafafa', border: '1px solid #f0f0f0', borderRadius: 4 }}>
+                    {currentListenerPluginSpecs.map((spec) => (
+                      <Form.Item key={spec.key} label={spec.label || spec.key} tooltip={spec.description} required={spec.required} style={{ marginBottom: 8 }}>
+                        {spec.type === 'int' || spec.type === 'number' || spec.type === 'float' ? (
+                          <InputNumber
+                            value={pluginParams[spec.key]}
+                            min={spec.min}
+                            max={spec.max}
+                            onChange={(v) => setPluginParams((c) => ({ ...c, [spec.key]: v }))}
+                            style={{ width: '100%' }}
+                          />
+                        ) : spec.type === 'bool' ? (
+                          <Switch
+                            checked={!!pluginParams[spec.key]}
+                            onChange={(v) => setPluginParams((c) => ({ ...c, [spec.key]: v }))}
+                          />
+                        ) : spec.type === 'select' ? (
+                          <Select
+                            value={pluginParams[spec.key]}
+                            onChange={(v) => setPluginParams((c) => ({ ...c, [spec.key]: v }))}
+                            options={(spec.options || []).map((o) => ({ value: o, label: o }))}
+                            allowClear
+                          />
+                        ) : (
+                          <Input
+                            value={pluginParams[spec.key] ?? ''}
+                            onChange={(e) => setPluginParams((c) => ({ ...c, [spec.key]: e.target.value }))}
+                          />
+                        )}
+                      </Form.Item>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+
+            {createOption.kind === 'chain' && createOption.type === 'plugin_chain' && (
+              <>
+                <Form.Item label="处理器插件" required tooltip="选择已加载的 processor 插件；一个容器只选一个处理器，多个处理请串联多个容器">
+                  <Select
+                    placeholder="选择 processor 插件"
+                    options={processorPlugins.map((p) => ({ value: p.name, label: p.display || p.name }))}
+                    onChange={(name) => {
+                      setPluginName(name);
+                      const p = processorPlugins.find((x) => x.name === name);
+                      const defaults: Record<string, any> = {};
+                      for (const spec of p?.params || []) defaults[spec.key] = spec.default;
+                      setPluginParams(defaults);
+                    }}
+                    notFoundContent={processorPlugins.length === 0 ? '暂无已加载的 processor 插件' : undefined}
+                  />
+                </Form.Item>
+                {pluginName && currentProcessorPluginSpecs.length > 0 && (
+                  <div style={{ padding: '8px 12px', background: '#fafafa', border: '1px solid #f0f0f0', borderRadius: 4 }}>
+                    {currentProcessorPluginSpecs.map((spec) => (
+                      <Form.Item key={spec.key} label={spec.label || spec.key} tooltip={spec.description} required={spec.required} style={{ marginBottom: 8 }}>
+                        {spec.type === 'int' || spec.type === 'number' || spec.type === 'float' ? (
+                          <InputNumber
+                            value={pluginParams[spec.key]}
+                            min={spec.min}
+                            max={spec.max}
+                            onChange={(v) => setPluginParams((c) => ({ ...c, [spec.key]: v }))}
+                            style={{ width: '100%' }}
+                          />
+                        ) : spec.type === 'bool' ? (
+                          <Switch
+                            checked={!!pluginParams[spec.key]}
+                            onChange={(v) => setPluginParams((c) => ({ ...c, [spec.key]: v }))}
+                          />
+                        ) : spec.type === 'select' ? (
+                          <Select
+                            value={pluginParams[spec.key]}
+                            onChange={(v) => setPluginParams((c) => ({ ...c, [spec.key]: v }))}
+                            options={(spec.options || []).map((o) => ({ value: o, label: o }))}
+                            allowClear
+                          />
+                        ) : (
+                          <Input
+                            value={pluginParams[spec.key] ?? ''}
+                            onChange={(e) => setPluginParams((c) => ({ ...c, [spec.key]: e.target.value }))}
+                          />
+                        )}
+                      </Form.Item>
+                    ))}
+                  </div>
+                )}
               </>
             )}
 
@@ -1638,6 +1916,7 @@ const DataFlowCanvasInner: React.FC = () => {
                 </Button>
               </>
             )}
+
           </Form>
         )}
       </Modal>

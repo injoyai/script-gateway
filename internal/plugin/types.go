@@ -40,9 +40,6 @@ type Manifest struct {
 	Dir         string      `yaml:"-" json:"dir"`
 }
 
-// EmitFunc listener 用来推送消息回主线
-type EmitFunc func(payload []byte, topic string, metadata map[string]any) error
-
 // Plugin 已加载的插件实例
 type Plugin struct {
 	Manifest Manifest
@@ -50,12 +47,14 @@ type Plugin struct {
 	Init     func(map[string]any) error
 	Close    func() error
 
-	// 各类型入口（按 Manifest.Type 仅其中一个被填充）
-	RunListener func(context.Context, map[string]any, EmitFunc) error
-	Decode      func([]byte, map[string]any) (map[string]any, error)
-	Process     func([]byte, string, map[string]any, map[string]any) ([]byte, string, map[string]any, bool, error)
-	Push        func(context.Context, []byte, string, map[string]any, map[string]any) error
-	RunTask     func(context.Context, map[string]any) error
+	// 各类型入口（按 Manifest.Type 仅对应类型被填充）
+	Run     func() error
+	Read    func() ([]byte, error)
+	Write   func([]byte) error
+	Decode  func([]byte, map[string]any) (map[string]any, error)
+	Process func([]byte, string, map[string]any, map[string]any) ([]byte, string, map[string]any, bool, error)
+	Push    func(context.Context, []byte, string, map[string]any, map[string]any) error
+	RunTask func(context.Context, map[string]any) error
 
 	Mu sync.Mutex
 }

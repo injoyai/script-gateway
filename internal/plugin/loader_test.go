@@ -69,6 +69,24 @@ func TestLoader_MissingEntry(t *testing.T) {
 	}
 }
 
+// TestLoader_TimerPluginLoads 验证真实的 plugins/listeners/timer 能被加载
+func TestLoader_TimerPluginLoads(t *testing.T) {
+	r := NewRegistry("../../plugins")
+	if err := r.LoadAll(); err != nil {
+		t.Fatalf("LoadAll error: %v", err)
+	}
+	if failed := r.ListFailed(); len(failed) > 0 {
+		t.Fatalf("expected no failures, got: %+v", failed)
+	}
+	p, ok := r.Get(TypeListener, "timer")
+	if !ok {
+		t.Fatalf("listener timer not loaded")
+	}
+	if p.Run == nil || p.Read == nil || p.Close == nil {
+		t.Fatalf("timer: missing Run/Read/Close")
+	}
+}
+
 // TestLoader_AllTypes 验证五种插件类型都能正确加载并绑定符号
 func TestLoader_AllTypes(t *testing.T) {
 	root := t.TempDir()
@@ -78,9 +96,19 @@ func TestLoader_AllTypes(t *testing.T) {
 		"name: tick\ntype: listener\nentry: main.go\n",
 		`package tick
 
-import "context"
+func Run() error {
+	return nil
+}
 
-func Run(ctx context.Context, params map[string]any, emit func([]byte, string, map[string]any) error) error {
+func Close() error {
+	return nil
+}
+
+func Read() ([]byte, error) {
+	return []byte("tick"), nil
+}
+
+func Write(p []byte) error {
 	return nil
 }
 `)
@@ -154,8 +182,8 @@ func Run(ctx context.Context, params map[string]any) error {
 		}
 		switch tc.typ {
 		case TypeListener:
-			if p.RunListener == nil {
-				t.Fatalf("listener %s: RunListener not bound", tc.name)
+			if p.Run == nil || p.Close == nil || p.Read == nil || p.Write == nil {
+				t.Fatalf("listener %s: script-style listener functions not bound", tc.name)
 			}
 		case TypeDecoder:
 			if p.Decode == nil {

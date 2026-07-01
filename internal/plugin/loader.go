@@ -214,12 +214,24 @@ func bindSymbols(p *Plugin, itp *interp.Interpreter, pkg string) error {
 		if err != nil {
 			return fmt.Errorf("listener plugin must define Run: %w", err)
 		}
-		fn, ok := v.Interface().(func(context.Context, map[string]any, func([]byte, string, map[string]any) error) error)
+		runFn, ok := v.Interface().(func() error)
 		if !ok {
 			return fmt.Errorf("listener Run signature mismatch")
 		}
-		p.RunListener = func(ctx context.Context, params map[string]any, emit EmitFunc) error {
-			return fn(ctx, params, emit)
+		v, err = itp.Eval(pkg + ".Read")
+		if err != nil {
+			return fmt.Errorf("listener plugin must define Read: %w", err)
+		}
+		readFn, ok := v.Interface().(func() ([]byte, error))
+		if !ok {
+			return fmt.Errorf("listener Read signature mismatch")
+		}
+		p.Run = runFn
+		p.Read = readFn
+		if v, err := itp.Eval(pkg + ".Write"); err == nil {
+			if fn, ok := v.Interface().(func([]byte) error); ok {
+				p.Write = fn
+			}
 		}
 	case TypeDecoder:
 		v, err := itp.Eval(pkg + ".Decode")

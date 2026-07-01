@@ -48,6 +48,9 @@ export interface ListenerItem {
   // MQTT Subscription
   sub_topic?: string;
   qos?: number;
+  // Plugin
+  plugin_name?: string;
+  params?: Record<string, any>;
   // Extra (framing etc.)
   extra?: string;
 }
@@ -153,6 +156,8 @@ const ListenerCrudPage = ({
         methods: values.methods || '',
         sub_topic: values.sub_topic || '',
         qos: values.qos || 0,
+        plugin_name: values.plugin_name || '',
+        params: values.params || {},
         extra: buildExtra ? buildExtra(values) : '',
       };
       const url = editing ? `${base}/update` : `${base}/create`;

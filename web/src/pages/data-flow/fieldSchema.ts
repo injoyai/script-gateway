@@ -101,6 +101,17 @@ const listenerConnSchemas: NodeFieldSchema[] = [
   },
   {
     nodeKind: 'listener',
+    nodeType: 'plugin',
+    fields: [
+      nameField(),
+      topicField('topic', '入站 Topic'),
+      topicField('out_topic', '出站 Topic'),
+      { key: 'plugin_name', label: '监听插件', type: 'string', required: true, fromConfig: true, pluginType: 'listener', placeholder: '选择监听插件' },
+      { key: 'params', label: '插件参数', type: 'pluginParams', fromConfig: true, pluginType: 'listener' },
+    ],
+  },
+  {
+    nodeKind: 'listener',
     nodeType: 'tcp_conn',
     fields: [
       nameField(),
@@ -180,6 +191,9 @@ export const buildFromForm = (kind: NodeKind, type: string, formVals: Record<str
         out[f.key] = v;
       }
     }
+  }
+  if (kind === 'listener' && type === 'plugin' && cfg.params === undefined && formVals.params) {
+    cfg.params = formVals.params;
   }
   out.config = JSON.stringify(cfg);
   return out;

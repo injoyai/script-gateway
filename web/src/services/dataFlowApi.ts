@@ -270,7 +270,9 @@ export const deleteViewer = async (id: number): Promise<void> => {
 export const listTopics = async (): Promise<{ topic: string; depth: number }[]> => {
   const res = await fetch(`${API_BASE}/viewer/topics`);
   const data = await res.json();
-  return data.data || [];
+  // 后端 TopicInfo 的 JSON 字段为 name/depth/subscribers，前端统一映射为 topic
+  const list = (data.data || []) as { name?: string; topic?: string; depth?: number }[];
+  return list.map((t) => ({ topic: t.topic ?? t.name ?? '', depth: t.depth ?? 0 }));
 };
 
 // ---- Mocker ----

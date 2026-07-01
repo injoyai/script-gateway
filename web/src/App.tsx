@@ -6,9 +6,6 @@ import Dashboard from './pages/Dashboard';
 import DeviceList from './pages/data-collection/DeviceList';
 import NodeList from './pages/data-collection/NodeList';
 import ProtocolManager from './pages/data-collection/ProtocolManager';
-import MqttForward from './pages/data-forwarding/MqttForward';
-import HttpForward from './pages/data-forwarding/HttpForward';
-import ScriptForward from './pages/data-forwarding/ScriptForward';
 import ScriptManager from './pages/scripts/ScriptManager';
 import ScriptCollection from './pages/scripts/ScriptCollection';
 import SshClient from './pages/system/SshClient';
@@ -20,6 +17,7 @@ import TcpListener from './pages/data-listener/TcpListener';
 import UdpListener from './pages/data-listener/UdpListener';
 import SerialListener from './pages/data-listener/SerialListener';
 import ScriptListener from './pages/data-listener/ScriptListener';
+import PluginListenerPage from './pages/data-listener/PluginListener';
 import DataParser from './pages/data-listener/DataParser';
 import DataMonitor from './pages/data-monitor/DataMonitor';
 import MessageQueue from './pages/data-monitor/MessageQueue';
@@ -60,6 +58,7 @@ const App: React.FC = () => {
                 <Route path="udp" element={<UdpListener />} />
                 <Route path="serial" element={<SerialListener />} />
                 <Route path="script" element={<ScriptListener />} />
+                <Route path="plugin" element={<PluginListenerPage />} />
                 <Route path="parser" element={<DataParser />} />
               </Route>
               <Route path="scripts">
@@ -71,11 +70,6 @@ const App: React.FC = () => {
                 <Route path="devices" element={<DeviceList />} />
                 <Route path="nodes" element={<NodeList />} />
                 <Route path="protocols" element={<ProtocolManager />} />
-              </Route>
-              <Route path="data-forwarding">
-                <Route path="mqtt" element={<MqttForward />} />
-                <Route path="http" element={<HttpForward />} />
-                <Route path="scripts" element={<ScriptForward />} />
               </Route>
               <Route path="system">
                 <Route path="ssh" element={<SshClient />} />

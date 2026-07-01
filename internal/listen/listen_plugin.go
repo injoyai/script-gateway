@@ -27,6 +27,7 @@ type PluginListener struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	msgCh  chan []byte
+	plugin *plugin.Plugin
 }
 
 func (l *PluginListener) Start(ctx context.Context) error {
@@ -37,19 +38,40 @@ func (l *PluginListener) Start(ctx context.Context) error {
 	l.closed.Store(false)
 	l.msgCh = make(chan []byte, 100)
 	l.ctx, l.cancel = context.WithCancel(ctx)
+	l.plugin = p
 
-	emit := func(payload []byte, topic string, metadata map[string]any) error {
+	// 启动 Run（阻塞，Close 使其自然返回）
+	go func() {
+		defer func() { _ = recover() }()
+		_ = plugin.RunListener(p)
+	}()
+
+	// 启动 Read 循环，把插件 Read 的数据推入 msgCh
+	go l.readLoop()
+
+	return nil
+}
+
+func (l *PluginListener) readLoop() {
+	for {
 		select {
-		case l.msgCh <- payload:
-			return nil
 		case <-l.ctx.Done():
-			return l.ctx.Err()
+			return
+		default:
+		}
+		data, err := plugin.ReadListener(l.plugin)
+		if err != nil {
+			continue
+		}
+		if len(data) == 0 {
+			continue
+		}
+		select {
+		case l.msgCh <- data:
+		case <-l.ctx.Done():
+			return
 		}
 	}
-	go func() {
-		_ = plugin.RunListener(l.ctx, p, l.params, emit)
-	}()
-	return nil
 }
 
 func (l *PluginListener) ReadMessage() ([]byte, error) {
@@ -64,7 +86,12 @@ func (l *PluginListener) ReadMessage() ([]byte, error) {
 	}
 }
 
-func (l *PluginListener) Write(p []byte) (int, error) { return len(p), nil }
+func (l *PluginListener) Write(p []byte) (int, error) {
+	if err := plugin.WriteListener(l.plugin, p); err != nil {
+		return 0, err
+	}
+	return len(p), nil
+}
 
 func (l *PluginListener) Closed() bool { return l.closed.Load() }
 
@@ -72,6 +99,10 @@ func (l *PluginListener) Close() error {
 	l.closed.Store(true)
 	if l.cancel != nil {
 		l.cancel()
+	}
+	if l.plugin != nil && l.plugin.Close != nil {
+		defer func() { _ = recover() }()
+		_ = l.plugin.Close()
 	}
 	return nil
 }

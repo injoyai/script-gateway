@@ -2,6 +2,7 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { Table, Button, Modal, Form, Input, InputNumber, Select, Switch, Space, Tag, message, Popconfirm } from 'antd';
 import { PlusOutlined, ReloadOutlined, CodeOutlined } from '@ant-design/icons';
 import TopicLink from '../../components/TopicLink';
+import { TopicMultiSelect } from '../data-flow/FlowNodes';
 import useScriptEditorStore from '../../store/useScriptEditorStore';
 import ScriptFormField from '../../components/ScriptFormField';
 import { listPluginsByType, type PluginInfo, type PluginParamSpec } from '../../services/pluginApi';
@@ -71,14 +72,14 @@ const DispatcherManager: React.FC = () => {
     try { config = JSON.parse(record.config || '{}'); } catch {}
     let topics: string[] = [];
     try { topics = JSON.parse(record.topics || '[]'); } catch {}
-    form.setFieldsValue({ ...record, ...config, topic_list: topics.join(',') });
+    form.setFieldsValue({ ...record, ...config, topic_list: topics });
     setModalVisible(true);
   };
 
   const handleSubmit = async () => {
     const values = await form.validateFields();
     const { type, name, enable, topic_list, ...restConfig } = values;
-    const topics = (topic_list || '').split(',').map((t: string) => t.trim()).filter(Boolean);
+    const topics = Array.isArray(topic_list) ? topic_list : [];
     const payload = {
       id: editItem?.id,
       name,
@@ -297,7 +298,7 @@ const DispatcherManager: React.FC = () => {
         <Form form={form} layout="vertical">
           <Form.Item name="name" label="名称" rules={[{ required: true }]}><Input /></Form.Item>
           <Form.Item name="type" label="类型" rules={[{ required: true }]}><Select options={DISPATCHER_TYPES} /></Form.Item>
-          <Form.Item name="topic_list" label="订阅Topics"><Input placeholder="topic1,topic2 (逗号分隔)" /></Form.Item>
+          <Form.Item name="topic_list" label="订阅Topics" tooltip="分发器订阅这些 topic，可多选"><TopicMultiSelect placeholder="选择或输入 topic" /></Form.Item>
           <Form.Item name="enable" label="启用" valuePropName="checked"><Switch /></Form.Item>
           {renderConfigFields()}
         </Form>

@@ -1,528 +1,281 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import {
-  Button,
-  Card,
-  Empty,
-  Form,
-  Input,
-  InputNumber,
-  List,
-  Modal,
-  Popconfirm,
-  Select,
-  Space,
-  Switch,
-  Tag,
-  Tooltip,
-  Typography,
-  message,
-} from 'antd';
-import {
-  DeleteOutlined,
-  EditOutlined,
-  PlusOutlined,
-  ReloadOutlined,
-  FileTextOutlined,
-  ArrowUpOutlined,
-  ArrowDownOutlined,
-} from '@ant-design/icons';
+import React, { useState, useEffect, useCallback } from 'react';
+import { Table, Button, Modal, Form, Input, InputNumber, Select, Switch, Space, Tag, message, Popconfirm } from 'antd';
+import { PlusOutlined, ReloadOutlined, CodeOutlined } from '@ant-design/icons';
 import TopicLink from '../../components/TopicLink';
-import CodeEditor from '../../components/CodeEditor';
+import useScriptEditorStore from '../../store/useScriptEditorStore';
 import { listPluginsByType, type PluginInfo, type PluginParamSpec } from '../../services/pluginApi';
+import {
+  PROCESSOR_TYPES,
+  findProcessorType,
+  buildDefaultConfig,
+  parseSingleProcessor,
+  serializeSingleProcessor,
+} from '../data-flow/processorSchema';
 
 const API_BASE = '/api';
-const SIMPLE_MODE = 'simple';
-const ADVANCED_MODE = 'advanced';
-const { Text } = Typography;
+
+// 容器类型：脚本链 / 内置处理器链 / 插件处理器链
+// 与数据流可视化页面保持一致
+const CHAIN_KIND_SCRIPT = 'script_chain';
+const CHAIN_KIND_BUILTIN = 'chain';
+const CHAIN_KIND_PLUGIN = 'plugin_chain';
+const CHAIN_KIND_OPTIONS = [
+  { value: CHAIN_KIND_SCRIPT, label: '脚本处理器链' },
+  { value: CHAIN_KIND_BUILTIN, label: '内置处理器链' },
+  { value: CHAIN_KIND_PLUGIN, label: '插件处理器链' },
+];
+
+// 与 AGENTS.md 第 1 条一致：script 处理器函数名固定 Deal，返回 map[string]any
+const DEFAULT_PROCESS_SCRIPT = `package main
+
+func Deal(payload []byte) (map[string]any, error) {
+	return map[string]any{
+		"": payload,
+	}, nil
+}
+`;
 
 interface ProcessorItem {
   id: number;
   name: string;
   topic: string;
+  out_topic?: string;
   processors: string;
   enable: boolean;
 }
 
-interface ProcessorConfigItem {
-  key: string;
-  config?: string;
-}
+// 从 processors 推断容器类型
+const detectChainKind = (processorsRaw?: string): string => {
+  const parsed = parseSingleProcessor(processorsRaw);
+  if (parsed?.key === 'script') return CHAIN_KIND_SCRIPT;
+  if (parsed?.key === 'plugin') return CHAIN_KIND_PLUGIN;
+  return CHAIN_KIND_BUILTIN;
+};
 
-interface VisualProcessorNode {
-  id: string;
-  key: string;
+// 从 processors 提取脚本内容
+const extractScript = (raw?: string): string => {
+  try {
+    const arr = JSON.parse(raw || '[]');
+    if (!Array.isArray(arr) || arr.length === 0) return DEFAULT_PROCESS_SCRIPT;
+    const item = arr[0];
+    const cfg = typeof item.config === 'string' ? JSON.parse(item.config) : (item.config || {});
+    return cfg.script || DEFAULT_PROCESS_SCRIPT;
+  } catch {
+    return DEFAULT_PROCESS_SCRIPT;
+  }
+};
+
+// 内置处理器的配置表单（与数据流页面 InlineEditPanel 一致）
+const BuiltinProcessorFields: React.FC<{
+  processorKey: string;
   config: Record<string, any>;
-}
-
-const DEFAULT_PROCESS_SCRIPT = `package main
-
-// Process 处理订阅到的消息
-// 返回值依次为：
-//   newPayload  处理后的数据，传 nil 表示不修改
-//   newTopic    处理后的目标 topic，传空串表示不修改
-//   newMetadata 处理后的元数据，传 nil 表示不修改
-//   pass        false 表示丢弃该消息
-//   err         处理错误
-func Process(payload []byte, topic string, metadata map[string]any) ([]byte, string, map[string]any, bool, error) {
-	return payload, topic, metadata, true, nil
-}
-`;
-
-const SIMPLE_PROCESSOR_OPTIONS = [
-  { value: 'json_format', label: 'JSON格式化' },
-  { value: 'json_extract', label: 'JSON提取' },
-  { value: 'json_filter', label: 'JSON过滤' },
-  { value: 'text_replace', label: '文本替换' },
-  { value: 'text_regex_filter', label: '正则过滤' },
-  { value: 'field_map', label: '字段映射' },
-  { value: 'dlt645', label: 'DLT645协议' },
-  { value: 'modbus_rtu', label: 'Modbus RTU协议' },
-  { value: 'script', label: '自定义脚本' },
-  { value: 'plugin', label: '插件处理器' },
-  { value: 'plugin_decoder', label: '插件解码器' },
-];
-
-const createNodeId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-
-const createDefaultNode = (key = 'script'): VisualProcessorNode => ({
-  id: createNodeId(),
-  key,
-  config: key === 'script' ? { script: DEFAULT_PROCESS_SCRIPT } : { topic: '' },
-});
-
-const parseProcessors = (raw?: string): ProcessorConfigItem[] => {
-  try {
-    const parsed = JSON.parse(raw || '[]');
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
+  onConfigChange: (cfg: Record<string, any>) => void;
+}> = ({ processorKey, config, onConfigChange }) => {
+  const spec = findProcessorType(processorKey);
+  if (!spec) return null;
+  if (spec.fields.length === 0) {
+    return <div style={{ color: '#8c8c8c', fontSize: 12 }}>该处理器无可配置参数</div>;
   }
-};
-
-const parseConfig = (raw?: string) => {
-  try {
-    return JSON.parse(raw || '{}');
-  } catch {
-    return {};
-  }
-};
-
-const parseProcessorNodes = (raw?: string): VisualProcessorNode[] => {
-  const items = parseProcessors(raw);
-  if (!items.length) return [];
-  return items.map((item) => ({
-    id: createNodeId(),
-    key: item.key,
-    config: parseConfig(item.config),
-  }));
-};
-
-const buildProcessorItems = (nodes: VisualProcessorNode[]): ProcessorConfigItem[] => {
-  return nodes.map((node) => ({
-    key: node.key,
-    config: JSON.stringify(node.config || {}),
-  }));
-};
-
-const parseFieldMapping = (raw: string) => {
-  const mapping: Record<string, string> = {};
-  raw.split('\n').map(line => line.trim()).filter(Boolean).forEach((line) => {
-    const [from, to] = line.split('=').map(item => item.trim());
-    if (from && to) mapping[from] = to;
-  });
-  return mapping;
-};
-
-const mappingToText = (mapping?: Record<string, string>) => {
-  if (!mapping) return '';
-  return Object.entries(mapping).map(([from, to]) => `${from}=${to}`).join('\n');
-};
-
-const detectMode = (processors: ProcessorConfigItem[]) => processors.length <= 1 ? SIMPLE_MODE : ADVANCED_MODE;
-
-const getProcessorSummary = (processors: ProcessorConfigItem[]) => {
-  if (!processors.length) return '-';
-  return processors.map(item => item.key).join(' -> ');
-};
-
-const getOutputTopic = (processors: ProcessorConfigItem[]) => {
-  for (const item of processors) {
-    const cfg = parseConfig(item.config);
-    if (cfg.topic) return cfg.topic;
-  }
-  return '';
-};
-
-const buildSimpleProcessor = (values: Record<string, any>): ProcessorConfigItem[] => {
-  const outTopic = values.out_topic || '';
-  switch (values.processor_key) {
-    case 'json_format':
-      return [{ key: 'json_format', config: JSON.stringify({ pretty: values.json_pretty ?? true, topic: outTopic }) }];
-    case 'json_extract':
-      return [{ key: 'json_extract', config: JSON.stringify({ path: values.json_path || '', topic: outTopic }) }];
-    case 'json_filter':
-      return [{ key: 'json_filter', config: JSON.stringify({ path: values.json_filter_path || '', equals: values.json_filter_equals || '', topic: outTopic }) }];
-    case 'text_replace':
-      return [{ key: 'text_replace', config: JSON.stringify({ from: values.text_from || '', to: values.text_to || '', topic: outTopic }) }];
-    case 'text_regex_filter':
-      return [{ key: 'text_regex_filter', config: JSON.stringify({ pattern: values.text_pattern || '', topic: outTopic }) }];
-    case 'field_map':
-      return [{ key: 'field_map', config: JSON.stringify({ mapping: parseFieldMapping(values.field_mapping || ''), topic: outTopic }) }];
-    case 'dlt645':
-      return [{ key: 'dlt645', config: JSON.stringify({ topic: outTopic }) }];
-    case 'modbus_rtu':
-      return [{ key: 'modbus_rtu', config: JSON.stringify({ topic: outTopic }) }];
-    case 'script':
-      return [{ key: 'script', config: JSON.stringify({ script: values.script || DEFAULT_PROCESS_SCRIPT, topic: outTopic }) }];
-    case 'plugin':
-      return [{ key: 'plugin', config: JSON.stringify({ plugin_name: values.plugin_name || '', params: values.plugin_params || {}, topic: outTopic }) }];
-    case 'plugin_decoder':
-      return [{ key: 'plugin_decoder', config: JSON.stringify({ plugin_name: values.plugin_name || '', params: values.plugin_params || {}, topic: outTopic }) }];
-    default:
-      return [];
-  }
-};
-
-const fillFormValues = (record?: ProcessorItem | null) => {
-  if (!record) {
-    return {
-      name: '',
-      topic: '',
-      enable: true,
-      mode: SIMPLE_MODE,
-      processor_key: 'script',
-      script: DEFAULT_PROCESS_SCRIPT,
-      out_topic: '',
-      json_pretty: true,
-    };
-  }
-
-  const processors = parseProcessors(record.processors);
-  const mode = detectMode(processors);
-  const first = processors[0];
-  const cfg = parseConfig(first?.config);
-  return {
-    name: record.name,
-    topic: record.topic,
-    enable: record.enable,
-    mode,
-    processor_key: first?.key || 'script',
-    script: cfg.script || DEFAULT_PROCESS_SCRIPT,
-    out_topic: cfg.topic || '',
-    json_pretty: cfg.pretty ?? true,
-    json_path: cfg.path || '',
-    json_filter_path: cfg.path || '',
-    json_filter_equals: cfg.equals || '',
-    text_from: cfg.from || '',
-    text_to: cfg.to || '',
-    text_pattern: cfg.pattern || '',
-    field_mapping: mappingToText(cfg.mapping),
-    plugin_name: cfg.plugin_name || '',
-    plugin_params: cfg.params || {},
-  };
-};
-
-const updateNodeAt = (nodes: VisualProcessorNode[], index: number, updater: (node: VisualProcessorNode) => VisualProcessorNode) => {
-  return nodes.map((node, currentIndex) => currentIndex === index ? updater(node) : node);
-};
-
-const moveNode = (nodes: VisualProcessorNode[], index: number, direction: -1 | 1) => {
-  const targetIndex = index + direction;
-  if (targetIndex < 0 || targetIndex >= nodes.length) return nodes;
-  const next = [...nodes];
-  [next[index], next[targetIndex]] = [next[targetIndex], next[index]];
-  return next;
-};
-
-// 根据插件的 ParamSpec 动态渲染参数输入控件
-const renderPluginParamInput = (
-  spec: PluginParamSpec,
-  value: any,
-  onChange: (val: any) => void,
-) => {
-  const label = spec.label || spec.key;
-  const rules = spec.required ? [{ required: true, message: `请输入${label}` }] : [];
-  switch (spec.type) {
-    case 'int':
-    case 'number':
-    case 'float':
-      return (
-        <Form.Item key={spec.key} name={['plugin_params', spec.key]} label={label} rules={rules} tooltip={spec.description}>
-          <InputNumber
-            value={value}
-            min={spec.min !== undefined ? spec.min : undefined}
-            max={spec.max !== undefined ? spec.max : undefined}
-            onChange={onChange}
-            style={{ width: '100%' }}
-          />
+  return (
+    <div style={{ padding: '8px 12px', background: '#fafafa', border: '1px solid #f0f0f0', borderRadius: 4 }}>
+      {spec.fields.map((f) => (
+        <Form.Item key={f.key} label={f.label} tooltip={f.tooltip} required={f.required} style={{ marginBottom: 8 }}>
+          {f.type === 'switch' ? (
+            <Switch
+              checked={!!config[f.key]}
+              onChange={(checked) => onConfigChange({ ...config, [f.key]: checked })}
+            />
+          ) : f.type === 'textarea' || f.type === 'json' ? (
+            <Input.TextArea
+              rows={3}
+              placeholder={f.placeholder || (f.type === 'json' ? '{}' : '')}
+              value={
+                f.type === 'json' && config[f.key] && typeof config[f.key] === 'object'
+                  ? JSON.stringify(config[f.key], null, 2)
+                  : (config[f.key] ?? '')
+              }
+              onChange={(e) => onConfigChange({ ...config, [f.key]: e.target.value })}
+            />
+          ) : (
+            <Input
+              placeholder={f.placeholder}
+              value={config[f.key] ?? ''}
+              onChange={(e) => onConfigChange({ ...config, [f.key]: e.target.value })}
+            />
+          )}
         </Form.Item>
-      );
-    case 'bool':
-      return (
-        <Form.Item key={spec.key} name={['plugin_params', spec.key]} label={label} rules={rules} tooltip={spec.description}>
-          <Switch checked={!!value} onChange={onChange} />
-        </Form.Item>
-      );
-    case 'select':
-      return (
-        <Form.Item key={spec.key} name={['plugin_params', spec.key]} label={label} rules={rules} tooltip={spec.description}>
-          <Select
-            value={value}
-            options={(spec.options || []).map(o => ({ value: o, label: o }))}
-            onChange={onChange}
-            allowClear
-          />
-        </Form.Item>
-      );
-    case 'string':
-    default:
-      return (
-        <Form.Item key={spec.key} name={['plugin_params', spec.key]} label={label} rules={rules} tooltip={spec.description}>
-          <Input value={value} onChange={(e) => onChange(e.target.value)} />
-        </Form.Item>
-      );
-  }
-};
-
-// 根据插件的 ParamSpec 动态渲染参数输入控件（高级模式，受控写法）
-const renderPluginParamInputControlled = (
-  spec: PluginParamSpec,
-  value: any,
-  onChange: (val: any) => void,
-) => {
-  const label = spec.label || spec.key;
-  switch (spec.type) {
-    case 'int':
-    case 'number':
-    case 'float':
-      return (
-        <Form.Item key={spec.key} label={label} style={{ marginBottom: 12 }} tooltip={spec.description}>
-          <InputNumber
-            value={value}
-            min={spec.min !== undefined ? spec.min : undefined}
-            max={spec.max !== undefined ? spec.max : undefined}
-            onChange={onChange}
-            style={{ width: '100%' }}
-          />
-        </Form.Item>
-      );
-    case 'bool':
-      return (
-        <Form.Item key={spec.key} label={label} style={{ marginBottom: 12 }} tooltip={spec.description}>
-          <Switch checked={!!value} onChange={onChange} />
-        </Form.Item>
-      );
-    case 'select':
-      return (
-        <Form.Item key={spec.key} label={label} style={{ marginBottom: 12 }} tooltip={spec.description}>
-          <Select
-            value={value}
-            options={(spec.options || []).map(o => ({ value: o, label: o }))}
-            onChange={onChange}
-            allowClear
-          />
-        </Form.Item>
-      );
-    case 'string':
-    default:
-      return (
-        <Form.Item key={spec.key} label={label} style={{ marginBottom: 12 }} tooltip={spec.description}>
-          <Input value={value} onChange={(e) => onChange(e.target.value)} />
-        </Form.Item>
-      );
-  }
+      ))}
+    </div>
+  );
 };
 
 const ProcessorChainManager: React.FC = () => {
   const [list, setList] = useState<ProcessorItem[]>([]);
   const [loading, setLoading] = useState(false);
-  const [selectedId, setSelectedId] = useState<number | null>(null);
-  const [saving, setSaving] = useState(false);
-  const [advancedNodes, setAdvancedNodes] = useState<VisualProcessorNode[]>([]);
-  const [processorPlugins, setProcessorPlugins] = useState<PluginInfo[]>([]);
-  const [decoderPlugins, setDecoderPlugins] = useState<PluginInfo[]>([]);
+  const [modalVisible, setModalVisible] = useState(false);
+  const [editItem, setEditItem] = useState<ProcessorItem | null>(null);
   const [form] = Form.useForm();
+  const openScriptEditor = useScriptEditorStore((s) => s.openEditor);
 
-  const selectedMode = Form.useWatch('mode', form);
-  const selectedProcessorKey = Form.useWatch('processor_key', form);
-  const selectedPluginName = Form.useWatch('plugin_name', form);
+  // 内置处理器链：选中的处理器类型 + 配置
+  const [builtinKey, setBuiltinKey] = useState<string>('');
+  const [builtinConfig, setBuiltinConfig] = useState<Record<string, any>>({});
+  // 脚本链：脚本草稿
+  const [scriptDraft, setScriptDraft] = useState<string>('');
+  // 插件链：插件名 + 参数 + 插件列表
+  const [pluginName, setPluginName] = useState<string>('');
+  const [pluginParams, setPluginParams] = useState<Record<string, any>>({});
+  const [processorPlugins, setProcessorPlugins] = useState<PluginInfo[]>([]);
 
-  // 当前选中的 processor/decoder 插件的参数定义
-  const currentPluginSpecs = useMemo(() => {
-    const pool = selectedProcessorKey === 'plugin_decoder' ? decoderPlugins : processorPlugins;
-    const p = pool.find(p => p.name === selectedPluginName);
+  const currentPluginSpecs: PluginParamSpec[] = (() => {
+    const p = processorPlugins.find((p) => p.name === pluginName);
     return p?.params || [];
-  }, [processorPlugins, decoderPlugins, selectedProcessorKey, selectedPluginName]);
+  })();
 
-  const selectedItem = useMemo(
-    () => list.find(item => item.id === selectedId) || null,
-    [list, selectedId],
-  );
-
-  const selectedProcessors = useMemo(() => {
-    const mode = form.getFieldValue('mode');
-    return mode === ADVANCED_MODE ? buildProcessorItems(advancedNodes) : parseProcessors(selectedItem?.processors);
-  }, [advancedNodes, form, selectedItem]);
-
-  const isDirty = useMemo(() => {
-    if (!selectedItem) return false;
-    const currentValues = form.getFieldsValue(true);
-    const currentProcessors = currentValues.mode === ADVANCED_MODE
-      ? buildProcessorItems(advancedNodes)
-      : buildSimpleProcessor(currentValues);
-    return JSON.stringify(fillFormValues(selectedItem)) !== JSON.stringify(fillFormValues({
-      ...selectedItem,
-      processors: JSON.stringify(currentProcessors),
-      name: currentValues.name,
-      topic: currentValues.topic,
-      enable: currentValues.enable ?? false,
-    } as ProcessorItem));
-  }, [advancedNodes, form, selectedItem]);
-
-  const applySelection = useCallback((item: ProcessorItem | null) => {
-    if (!item) {
-      setSelectedId(null);
-      setAdvancedNodes([]);
-      form.setFieldsValue(fillFormValues(null));
-      return;
+  const fetchProcessorPlugins = useCallback(async () => {
+    try {
+      const data = await listPluginsByType('processor');
+      setProcessorPlugins(data || []);
+    } catch {
+      // 静默
     }
-    setSelectedId(item.id);
-    setAdvancedNodes(parseProcessorNodes(item.processors));
-    form.setFieldsValue(fillFormValues(item));
-  }, [form]);
+  }, []);
 
-  const confirmBeforeAction = useCallback((action: () => void) => {
-    if (!isDirty) {
-      action();
-      return;
-    }
-    Modal.confirm({
-      title: '当前规则尚未保存',
-      content: '继续操作会丢失未保存内容，是否继续？',
-      okText: '继续',
-      cancelText: '取消',
-      onOk: action,
-    });
-  }, [isDirty]);
+  useEffect(() => { fetchProcessorPlugins(); }, [fetchProcessorPlugins]);
+
+  const selectedKind = Form.useWatch('kind', form) as string | undefined;
 
   const fetchList = useCallback(async () => {
     setLoading(true);
     try {
       const res = await fetch(`${API_BASE}/processor_chain/list`);
       const data = await res.json();
-      const items = data.data || [];
-      setList(items);
-      if (!items.length) {
-        applySelection(null);
-        return;
-      }
-      const nextSelected = items.find((item: ProcessorItem) => item.id === selectedId) || items[0];
-      applySelection(nextSelected);
+      setList(data.data || []);
     } catch {
-      message.error('获取数据处理列表失败');
+      message.error('获取列表失败');
     } finally {
       setLoading(false);
     }
-  }, [applySelection, selectedId]);
-
-  // 获取 processor 类型插件列表
-  const fetchProcessorPlugins = useCallback(async () => {
-    try {
-      const data = await listPluginsByType('processor');
-      setProcessorPlugins(data || []);
-    } catch {
-      // 静默失败，不影响主流程
-    }
   }, []);
 
-  // 获取 decoder 类型插件列表
-  const fetchDecoderPlugins = useCallback(async () => {
-    try {
-      const data = await listPluginsByType('decoder');
-      setDecoderPlugins(data || []);
-    } catch {
-      // 静默失败，不影响主流程
-    }
-  }, []);
+  useEffect(() => { fetchList(); }, [fetchList]);
 
-  useEffect(() => {
-    fetchList();
-  }, [fetchList]);
+  const resetForm = useCallback(() => {
+    form.resetFields();
+    setBuiltinKey('');
+    setBuiltinConfig({});
+    setScriptDraft('');
+    setPluginName('');
+    setPluginParams({});
+  }, [form]);
 
-  useEffect(() => {
-    fetchProcessorPlugins();
-  }, [fetchProcessorPlugins]);
-
-  useEffect(() => {
-    fetchDecoderPlugins();
-  }, [fetchDecoderPlugins]);
-
-  const handleSelect = (item: ProcessorItem) => {
-    if (selectedId === item.id) return;
-    confirmBeforeAction(() => applySelection(item));
+  const handleCreate = () => {
+    setEditItem(null);
+    resetForm();
+    form.setFieldsValue({ kind: CHAIN_KIND_SCRIPT, enable: false });
+    setModalVisible(true);
   };
 
-  const handleCreate = async () => {
-    confirmBeforeAction(async () => {
-      try {
-        const payload = {
-          name: '未命名数据处理',
-          topic: '',
-          processors: JSON.stringify([{ key: 'script', config: JSON.stringify({ script: DEFAULT_PROCESS_SCRIPT }) }]),
-          enable: true,
-        };
-        const res = await fetch(`${API_BASE}/processor_chain/create`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
-        });
-        const data = await res.json();
-        if (data.code === 0 || data.code === 200) {
-          message.success('已创建');
-          await fetchList();
-        } else {
-          message.error(data.msg || '创建失败');
-        }
-      } catch {
-        message.error('创建失败');
-      }
+  const handleEdit = (record: ProcessorItem) => {
+    setEditItem(record);
+    const kind = detectChainKind(record.processors);
+    form.setFieldsValue({
+      name: record.name,
+      topic: record.topic,
+      out_topic: record.out_topic || '',
+      enable: record.enable,
+      kind,
     });
+    setScriptDraft('');
+    if (kind === CHAIN_KIND_BUILTIN) {
+      const parsed = parseSingleProcessor(record.processors);
+      if (parsed && parsed.key !== 'script' && parsed.key !== 'plugin') {
+        setBuiltinKey(parsed.key);
+        setBuiltinConfig(parsed.config || buildDefaultConfig(parsed.key));
+      } else {
+        setBuiltinKey('');
+        setBuiltinConfig({});
+      }
+      setPluginName('');
+      setPluginParams({});
+    } else if (kind === CHAIN_KIND_PLUGIN) {
+      const parsed = parseSingleProcessor(record.processors);
+      setPluginName(parsed?.config?.plugin_name || '');
+      setPluginParams(parsed?.config?.params || {});
+      setBuiltinKey('');
+      setBuiltinConfig({});
+    } else {
+      setBuiltinKey('');
+      setBuiltinConfig({});
+      setPluginName('');
+      setPluginParams({});
+    }
+    setModalVisible(true);
   };
 
-  const handleSave = async () => {
-    if (!selectedItem) return;
+  const handleSubmit = async () => {
     try {
-      setSaving(true);
       const values = await form.validateFields();
-      const processors = values.mode === ADVANCED_MODE
-        ? buildProcessorItems(advancedNodes)
-        : buildSimpleProcessor(values);
-      if (!processors.length) {
-        message.error('请至少配置一个处理器');
-        return;
+      // 序列化 processors
+      let processors: string;
+      if (values.kind === CHAIN_KIND_SCRIPT) {
+        const script = scriptDraft || (editItem ? extractScript(editItem.processors) : DEFAULT_PROCESS_SCRIPT);
+        processors = JSON.stringify([{ key: 'script', config: JSON.stringify({ script }) }]);
+      } else if (values.kind === CHAIN_KIND_PLUGIN) {
+        if (!pluginName) {
+          message.error('请选择插件');
+          return;
+        }
+        processors = JSON.stringify([{ key: 'plugin', config: JSON.stringify({ plugin_name: pluginName, params: pluginParams }) }]);
+      } else {
+        // 内置链：必须选了处理器类型
+        if (!builtinKey) {
+          message.error('请选择处理器类型');
+          return;
+        }
+        // JSON 字段：把字符串解析回对象
+        const spec = findProcessorType(builtinKey);
+        const finalConfig: Record<string, any> = { ...builtinConfig };
+        if (spec) {
+          for (const f of spec.fields) {
+            if (f.type === 'json' && typeof finalConfig[f.key] === 'string' && finalConfig[f.key].trim() !== '') {
+              try {
+                finalConfig[f.key] = JSON.parse(finalConfig[f.key]);
+              } catch {
+                message.error(`字段「${f.label}」不是合法 JSON`);
+                return;
+              }
+            }
+          }
+        }
+        processors = serializeSingleProcessor(builtinKey, finalConfig);
       }
+
       const payload = {
-        id: selectedItem.id,
+        id: editItem?.id,
         name: values.name,
         topic: values.topic || '',
-        processors: JSON.stringify(processors),
+        out_topic: values.out_topic || '',
+        processors,
         enable: values.enable ?? false,
       };
-      const res = await fetch(`${API_BASE}/processor_chain/update`, {
+
+      const url = editItem ? `${API_BASE}/processor_chain/update` : `${API_BASE}/processor_chain/create`;
+      const res = await fetch(url, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
       const data = await res.json();
       if (data.code === 0 || data.code === 200) {
-        message.success('保存成功');
-        await fetchList();
+        message.success(editItem ? '更新成功' : '创建成功');
+        setModalVisible(false);
+        fetchList();
       } else {
-        message.error(data.msg || '保存失败');
+        message.error(data.msg || '操作失败');
       }
     } catch {
-    } finally {
-      setSaving(false);
+      // 校验失败
     }
   };
 
@@ -535,472 +288,298 @@ const ProcessorChainManager: React.FC = () => {
         body: JSON.stringify({ id: record.id }),
       });
       message.success(enable ? '已启用' : '已禁用');
-      await fetchList();
+      fetchList();
     } catch {
       message.error('操作失败');
     }
   };
 
   const handleDelete = async (id: number) => {
-    const executeDelete = async () => {
-      try {
-        await fetch(`${API_BASE}/processor_chain/delete`, {
-          method: 'DELETE',
+    try {
+      await fetch(`${API_BASE}/processor_chain/delete`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id }),
+      });
+      message.success('删除成功');
+      fetchList();
+    } catch {
+      message.error('删除失败');
+    }
+  };
+
+  // 列表内「编辑脚本」按钮：直接打开脚本编辑器抽屉，保存后写入数据库
+  const handleEditScriptInline = async (record: ProcessorItem) => {
+    const current = extractScript(record.processors);
+    openScriptEditor({
+      name: record.name,
+      content: current,
+      language: 'go',
+      onSave: async (content) => {
+        const payload = {
+          id: record.id,
+          name: record.name,
+          topic: record.topic,
+          out_topic: record.out_topic || '',
+          processors: JSON.stringify([{ key: 'script', config: JSON.stringify({ script: content }) }]),
+          enable: record.enable,
+        };
+        const res = await fetch(`${API_BASE}/processor_chain/update`, {
+          method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ id }),
+          body: JSON.stringify(payload),
         });
-        message.success('删除成功');
-        await fetchList();
-      } catch {
-        message.error('删除失败');
-      }
-    };
-
-    if (selectedId === id) {
-      confirmBeforeAction(() => {
-        void executeDelete();
-      });
-      return;
-    }
-
-    await executeDelete();
+        const data = await res.json();
+        if (data.code !== 0 && data.code !== 200) {
+          throw new Error(data.msg || '保存失败');
+        }
+        fetchList();
+      },
+    });
   };
 
-  const handleModeChange = (mode: string) => {
-    form.setFieldValue('mode', mode);
-    if (mode === ADVANCED_MODE && advancedNodes.length === 0) {
-      const currentKey = form.getFieldValue('processor_key') || 'script';
-      const currentOutTopic = form.getFieldValue('out_topic') || '';
-      const currentNodes = buildSimpleProcessor({ ...form.getFieldsValue(), processor_key: currentKey, out_topic: currentOutTopic });
-      const nextNodes = currentNodes.length
-        ? currentNodes.map(item => ({ id: createNodeId(), key: item.key, config: parseConfig(item.config) }))
-        : [createDefaultNode(currentKey)];
-      setAdvancedNodes(nextNodes);
-    }
-    if (mode === SIMPLE_MODE && advancedNodes[0]) {
-      const first = advancedNodes[0];
-      const cfg = first.config || {};
-      form.setFieldsValue({
-        processor_key: first.key,
-        out_topic: cfg.topic || '',
-        json_pretty: cfg.pretty ?? true,
-        json_path: cfg.path || '',
-        json_filter_path: cfg.path || '',
-        json_filter_equals: cfg.equals || '',
-        text_from: cfg.from || '',
-        text_to: cfg.to || '',
-        text_pattern: cfg.pattern || '',
-        field_mapping: mappingToText(cfg.mapping),
-        script: cfg.script || DEFAULT_PROCESS_SCRIPT,
-      });
-    }
+  // 弹窗内「编辑脚本」按钮：写入草稿，提交时一并保存
+  const handleEditScriptInModal = () => {
+    const current = scriptDraft || (editItem ? extractScript(editItem.processors) : DEFAULT_PROCESS_SCRIPT);
+    openScriptEditor({
+      name: editItem?.name || '新处理器链',
+      content: current,
+      language: 'go',
+      onSave: (content) => {
+        setScriptDraft(content);
+        message.success('脚本已更新，点击「确定」保存生效');
+      },
+    });
   };
 
-  const renderSimpleProcessorForm = () => (
-    <>
-      <Form.Item name="processor_key" label="处理器类型" rules={[{ required: true, message: '请选择处理器类型' }]}>
-        <Select options={SIMPLE_PROCESSOR_OPTIONS} />
-      </Form.Item>
-
-      {selectedProcessorKey === 'json_format' && (
-        <Form.Item name="json_pretty" label="格式化方式">
-          <Select options={[{ value: true, label: '美化输出' }, { value: false, label: '压缩输出' }]} />
-        </Form.Item>
-      )}
-
-      {selectedProcessorKey === 'json_extract' && (
-        <Form.Item name="json_path" label="提取路径" rules={[{ required: true, message: '请输入 JSON 路径' }]}>
-          <Input placeholder="例如：data.temp" />
-        </Form.Item>
-      )}
-
-      {selectedProcessorKey === 'json_filter' && (
-        <>
-          <Form.Item name="json_filter_path" label="过滤路径" rules={[{ required: true, message: '请输入 JSON 路径' }]}>
-            <Input placeholder="例如：status" />
-          </Form.Item>
-          <Form.Item name="json_filter_equals" label="匹配值" rules={[{ required: true, message: '请输入匹配值' }]}>
-            <Input placeholder="例如：ok" />
-          </Form.Item>
-        </>
-      )}
-
-      {selectedProcessorKey === 'text_replace' && (
-        <>
-          <Form.Item name="text_from" label="替换前" rules={[{ required: true, message: '请输入替换前内容' }]}>
-            <Input />
-          </Form.Item>
-          <Form.Item name="text_to" label="替换后">
-            <Input />
-          </Form.Item>
-        </>
-      )}
-
-      {selectedProcessorKey === 'text_regex_filter' && (
-        <Form.Item name="text_pattern" label="正则表达式" rules={[{ required: true, message: '请输入正则表达式' }]}>
-          <Input placeholder="例如：^OK" />
-        </Form.Item>
-      )}
-
-      {selectedProcessorKey === 'field_map' && (
-        <Form.Item name="field_mapping" label="字段映射" rules={[{ required: true, message: '请输入字段映射' }]} tooltip="每行一个映射，格式: 原字段=目标字段">
-          <Input.TextArea rows={6} placeholder={"temp=temperature\nname=device_name"} />
-        </Form.Item>
-      )}
-
-      {selectedProcessorKey === 'script' && (
-        <Form.Item name="script" label="处理脚本">
-          <div style={{ border: '1px solid #f0f0f0', borderRadius: 8, overflow: 'hidden' }}>
-            <div style={{ padding: '8px 12px', borderBottom: '1px solid #f0f0f0', background: '#fafafa' }}>
-              <Text type="secondary">右侧脚本编辑</Text>
-            </div>
-            <CodeEditor
-              value={form.getFieldValue('script') || DEFAULT_PROCESS_SCRIPT}
-              onChange={(value) => form.setFieldValue('script', value)}
-              language="go"
-              theme="material"
-              height="420px"
-            />
-          </div>
-        </Form.Item>
-      )}
-
-      {selectedProcessorKey === 'plugin' && (
-        <>
-          <Form.Item name="plugin_name" label="插件" rules={[{ required: true, message: '请选择插件' }]}>
-            <Select
-              placeholder="选择处理器插件"
-              options={processorPlugins.map(p => ({
-                value: p.name,
-                label: p.display || p.name,
-              }))}
-              notFoundContent={processorPlugins.length === 0 ? '暂无已加载的 processor 插件' : undefined}
-            />
-          </Form.Item>
-          {currentPluginSpecs.length > 0 && (
-            <Card size="small" style={{ marginBottom: 16 }} title="插件参数">
-              {currentPluginSpecs.map(spec => {
-                const val = form.getFieldValue(['plugin_params', spec.key]) ?? spec.default;
-                return renderPluginParamInput(spec, val, (v) => {
-                  form.setFieldValue(['plugin_params', spec.key], v);
-                });
-              })}
-            </Card>
-          )}
-          {selectedPluginName && currentPluginSpecs.length === 0 && (
-            <Text type="secondary" style={{ display: 'block', marginBottom: 16 }}>
-              该插件没有可配置的参数
-            </Text>
-          )}
-        </>
-      )}
-
-      {selectedProcessorKey === 'plugin_decoder' && (
-        <>
-          <Form.Item name="plugin_name" label="插件" rules={[{ required: true, message: '请选择插件' }]}>
-            <Select
-              placeholder="选择解码器插件"
-              options={decoderPlugins.map(p => ({
-                value: p.name,
-                label: p.display || p.name,
-              }))}
-              notFoundContent={decoderPlugins.length === 0 ? '暂无已加载的 decoder 插件' : undefined}
-            />
-          </Form.Item>
-          {currentPluginSpecs.length > 0 && (
-            <Card size="small" style={{ marginBottom: 16 }} title="插件参数">
-              {currentPluginSpecs.map(spec => {
-                const val = form.getFieldValue(['plugin_params', spec.key]) ?? spec.default;
-                return renderPluginParamInput(spec, val, (v) => {
-                  form.setFieldValue(['plugin_params', spec.key], v);
-                });
-              })}
-            </Card>
-          )}
-          {selectedPluginName && currentPluginSpecs.length === 0 && (
-            <Text type="secondary" style={{ display: 'block', marginBottom: 16 }}>
-              该插件没有可配置的参数
-            </Text>
-          )}
-        </>
-      )}
-    </>
-  );
-
-  const renderNodeConfig = (node: VisualProcessorNode, index: number) => {
-    const cfg = node.config || {};
-    return (
-      <>
-        <Form.Item label="处理器类型" style={{ marginBottom: 12 }}>
-          <Select
-            value={node.key}
-            options={SIMPLE_PROCESSOR_OPTIONS}
-            onChange={(value) => setAdvancedNodes(prev => updateNodeAt(prev, index, () => createDefaultNode(value)))}
-          />
-        </Form.Item>
-
-        {node.key === 'json_format' && (
-          <Form.Item label="格式化方式" style={{ marginBottom: 12 }}>
-            <Select
-              value={cfg.pretty ?? true}
-              options={[{ value: true, label: '美化输出' }, { value: false, label: '压缩输出' }]}
-              onChange={(value) => setAdvancedNodes(prev => updateNodeAt(prev, index, item => ({ ...item, config: { ...item.config, pretty: value } })))}
-            />
-          </Form.Item>
-        )}
-
-        {node.key === 'json_extract' && (
-          <Form.Item label="提取路径" style={{ marginBottom: 12 }}>
-            <Input value={cfg.path || ''} placeholder="例如：data.temp" onChange={(e) => setAdvancedNodes(prev => updateNodeAt(prev, index, item => ({ ...item, config: { ...item.config, path: e.target.value } })))} />
-          </Form.Item>
-        )}
-
-        {node.key === 'json_filter' && (
-          <>
-            <Form.Item label="过滤路径" style={{ marginBottom: 12 }}>
-              <Input value={cfg.path || ''} placeholder="例如：status" onChange={(e) => setAdvancedNodes(prev => updateNodeAt(prev, index, item => ({ ...item, config: { ...item.config, path: e.target.value } })))} />
-            </Form.Item>
-            <Form.Item label="匹配值" style={{ marginBottom: 12 }}>
-              <Input value={cfg.equals || ''} placeholder="例如：ok" onChange={(e) => setAdvancedNodes(prev => updateNodeAt(prev, index, item => ({ ...item, config: { ...item.config, equals: e.target.value } })))} />
-            </Form.Item>
-          </>
-        )}
-
-        {node.key === 'text_replace' && (
-          <>
-            <Form.Item label="替换前" style={{ marginBottom: 12 }}>
-              <Input value={cfg.from || ''} onChange={(e) => setAdvancedNodes(prev => updateNodeAt(prev, index, item => ({ ...item, config: { ...item.config, from: e.target.value } })))} />
-            </Form.Item>
-            <Form.Item label="替换后" style={{ marginBottom: 12 }}>
-              <Input value={cfg.to || ''} onChange={(e) => setAdvancedNodes(prev => updateNodeAt(prev, index, item => ({ ...item, config: { ...item.config, to: e.target.value } })))} />
-            </Form.Item>
-          </>
-        )}
-
-        {node.key === 'text_regex_filter' && (
-          <Form.Item label="正则表达式" style={{ marginBottom: 12 }}>
-            <Input value={cfg.pattern || ''} placeholder="例如：^OK" onChange={(e) => setAdvancedNodes(prev => updateNodeAt(prev, index, item => ({ ...item, config: { ...item.config, pattern: e.target.value } })))} />
-          </Form.Item>
-        )}
-
-        {node.key === 'field_map' && (
-          <Form.Item label="字段映射" tooltip="每行一个映射，格式: 原字段=目标字段" style={{ marginBottom: 12 }}>
-            <Input.TextArea rows={5} value={mappingToText(cfg.mapping)} placeholder={"temp=temperature\nname=device_name"} onChange={(e) => setAdvancedNodes(prev => updateNodeAt(prev, index, item => ({ ...item, config: { ...item.config, mapping: parseFieldMapping(e.target.value) } })))} />
-          </Form.Item>
-        )}
-
-        {node.key === 'script' && (
-          <div style={{ border: '1px solid #f0f0f0', borderRadius: 8, overflow: 'hidden', marginBottom: 12 }}>
-            <div style={{ padding: '8px 12px', borderBottom: '1px solid #f0f0f0', background: '#fafafa' }}>
-              <Text type="secondary">右侧脚本编辑</Text>
-            </div>
-            <CodeEditor
-              value={cfg.script || DEFAULT_PROCESS_SCRIPT}
-              onChange={(value) => setAdvancedNodes(prev => updateNodeAt(prev, index, item => ({ ...item, config: { ...item.config, script: value } })))}
-              language="go"
-              theme="material"
-              height="320px"
-            />
-          </div>
-        )}
-
-        {node.key === 'plugin' && (
-          <>
-            <Form.Item label="插件" style={{ marginBottom: 12 }}>
-              <Select
-                value={cfg.plugin_name || ''}
-                placeholder="选择处理器插件"
-                options={processorPlugins.map(p => ({
-                  value: p.name,
-                  label: p.display || p.name,
-                }))}
-                onChange={(value) => setAdvancedNodes(prev => updateNodeAt(prev, index, item => ({ ...item, config: { plugin_name: value, params: {} } })))}
-                notFoundContent={processorPlugins.length === 0 ? '暂无已加载的 processor 插件' : undefined}
-              />
-            </Form.Item>
-            {(() => {
-              const plugin = processorPlugins.find(p => p.name === cfg.plugin_name);
-              const params = cfg.params || {};
-              if (!plugin || !plugin.params || plugin.params.length === 0) return null;
-              return plugin.params.map(spec => {
-                const val = params[spec.key] ?? spec.default;
-                return renderPluginParamInputControlled(spec, val, (v) => {
-                  setAdvancedNodes(prev => updateNodeAt(prev, index, item => ({
-                    ...item,
-                    config: { ...item.config, params: { ...(item.config.params || {}), [spec.key]: v } },
-                  })));
-                });
-              });
-            })()}
-          </>
-        )}
-
-        {node.key === 'plugin_decoder' && (
-          <>
-            <Form.Item label="插件" style={{ marginBottom: 12 }}>
-              <Select
-                value={cfg.plugin_name || ''}
-                placeholder="选择解码器插件"
-                options={decoderPlugins.map(p => ({
-                  value: p.name,
-                  label: p.display || p.name,
-                }))}
-                onChange={(value) => setAdvancedNodes(prev => updateNodeAt(prev, index, item => ({ ...item, config: { plugin_name: value, params: {} } })))}
-                notFoundContent={decoderPlugins.length === 0 ? '暂无已加载的 decoder 插件' : undefined}
-              />
-            </Form.Item>
-            {(() => {
-              const plugin = decoderPlugins.find(p => p.name === cfg.plugin_name);
-              const params = cfg.params || {};
-              if (!plugin || !plugin.params || plugin.params.length === 0) return null;
-              return plugin.params.map(spec => {
-                const val = params[spec.key] ?? spec.default;
-                return renderPluginParamInputControlled(spec, val, (v) => {
-                  setAdvancedNodes(prev => updateNodeAt(prev, index, item => ({
-                    ...item,
-                    config: { ...item.config, params: { ...(item.config.params || {}), [spec.key]: v } },
-                  })));
-                });
-              });
-            })()}
-          </>
-        )}
-
-        <Form.Item label="节点输出 Topic" style={{ marginBottom: 0 }}>
-          <Input value={cfg.topic || ''} placeholder="留空则沿用后续或原 Topic" onChange={(e) => setAdvancedNodes(prev => updateNodeAt(prev, index, item => ({ ...item, config: { ...item.config, topic: e.target.value } })))} />
-        </Form.Item>
-      </>
-    );
-  };
-
-  const renderAdvancedProcessorForm = () => (
-    <Card
-      size="small"
-      title="处理器链"
-      extra={<Button size="small" icon={<PlusOutlined />} onClick={() => setAdvancedNodes(prev => [...prev, createDefaultNode()])}>新增处理器</Button>}
-    >
-      <Space direction="vertical" size={12} style={{ width: '100%' }}>
-        {advancedNodes.map((node, index) => (
-          <Card
-            key={node.id}
-            size="small"
-            title={`节点 ${index + 1}`}
-            extra={
-              <Space>
-                <Button size="small" icon={<ArrowUpOutlined />} disabled={index === 0} onClick={() => setAdvancedNodes(prev => moveNode(prev, index, -1))} />
-                <Button size="small" icon={<ArrowDownOutlined />} disabled={index === advancedNodes.length - 1} onClick={() => setAdvancedNodes(prev => moveNode(prev, index, 1))} />
-                <Button size="small" danger icon={<DeleteOutlined />} onClick={() => setAdvancedNodes(prev => prev.filter(item => item.id !== node.id))} />
-              </Space>
-            }
-          >
-            {renderNodeConfig(node, index)}
-          </Card>
-        ))}
-        {!advancedNodes.length && <Empty description="暂无处理器节点，点击上方新增处理器" />}
-      </Space>
-    </Card>
-  );
+  const columns = [
+    { title: 'ID', dataIndex: 'id', key: 'id', width: 60 },
+    { title: '名称', dataIndex: 'name', key: 'name' },
+    {
+      title: '类型',
+      key: 'kind',
+      width: 130,
+      render: (_: any, record: ProcessorItem) => {
+        const kind = detectChainKind(record.processors);
+        if (kind === CHAIN_KIND_SCRIPT) return <Tag color="orange">脚本链</Tag>;
+        if (kind === CHAIN_KIND_PLUGIN) {
+          const parsed = parseSingleProcessor(record.processors);
+          const name = parsed?.config?.plugin_name || '-';
+          return <Tag color="purple">插件: {name}</Tag>;
+        }
+        const parsed = parseSingleProcessor(record.processors);
+        const name = findProcessorType(parsed?.key || '')?.name || parsed?.key || '-';
+        return <Tag color="blue">{name}</Tag>;
+      },
+    },
+    {
+      title: '订阅 Topic',
+      dataIndex: 'topic',
+      key: 'topic',
+      render: (t: string) => <TopicLink topic={t} color="green" emptyText="-" />,
+    },
+    {
+      title: '发布 Topic',
+      dataIndex: 'out_topic',
+      key: 'out_topic',
+      render: (t: string) => <TopicLink topic={t || ''} color="blue" emptyText="沿用原 Topic" />,
+    },
+    {
+      title: '状态',
+      dataIndex: 'enable',
+      key: 'enable',
+      width: 80,
+      render: (e: boolean, r: ProcessorItem) => <Switch checked={e} onChange={(v) => handleToggle(r, v)} size="small" />,
+    },
+    {
+      title: '操作',
+      key: 'action',
+      width: 220,
+      render: (_: any, record: ProcessorItem) => {
+        const isScript = detectChainKind(record.processors) === CHAIN_KIND_SCRIPT;
+        return (
+          <Space>
+            {isScript && (
+              <Button type="link" size="small" icon={<CodeOutlined />} onClick={() => handleEditScriptInline(record)}>
+                编辑脚本
+              </Button>
+            )}
+            <Button type="link" size="small" onClick={() => handleEdit(record)}>编辑</Button>
+            <Popconfirm title="确定删除?" onConfirm={() => handleDelete(record.id)}>
+              <Button type="link" size="small" danger>删除</Button>
+            </Popconfirm>
+          </Space>
+        );
+      },
+    },
+  ];
 
   return (
-    <div style={{ height: '100%', display: 'flex', gap: 16 }}>
-      <Card
-        title="数据处理列表"
-        style={{ width: 320, flexShrink: 0 }}
-        bodyStyle={{ padding: 0, height: 'calc(100vh - 210px)', overflow: 'auto' }}
-        extra={
-          <Space>
-            <Tooltip title="刷新">
-              <Button icon={<ReloadOutlined />} onClick={() => confirmBeforeAction(() => fetchList())} />
-            </Tooltip>
-            <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>新建</Button>
-          </Space>
-        }
-      >
-        <List
-          loading={loading}
-          dataSource={list}
-          renderItem={(item) => {
-            const processors = parseProcessors(item.processors);
-            const active = selectedId === item.id;
-            return (
-              <List.Item
-                onClick={() => handleSelect(item)}
-                style={{
-                  cursor: 'pointer',
-                  padding: '14px 16px',
-                  background: active ? '#e6f7ff' : '#fff',
-                  borderLeft: active ? '3px solid #1677ff' : '3px solid transparent',
-                }}
-                actions={[
-                  <Switch
-                    key="enable"
-                    size="small"
-                    checked={item.enable}
-                    onClick={(checked, e) => {
-                      e?.stopPropagation();
-                      handleToggle(item, checked);
-                    }}
-                  />,
-                  <Popconfirm
-                    key="delete"
-                    title="确定删除该规则?"
-                    onConfirm={(e) => {
-                      e?.stopPropagation();
-                      handleDelete(item.id);
-                    }}
-                    onCancel={(e) => e?.stopPropagation()}
-                  >
-                    <Button type="text" danger size="small" icon={<DeleteOutlined />} onClick={(e) => e.stopPropagation()} />
-                  </Popconfirm>,
-                ]}
-              >
-                <List.Item.Meta
-                  avatar={<FileTextOutlined style={{ color: active ? '#1677ff' : '#999' }} />}
-                  title={<Space><Text strong={active}>{item.name}</Text>{item.enable ? <Tag color="green">启用</Tag> : <Tag>禁用</Tag>}</Space>}
-                  description={<Space direction="vertical" size={2}><TopicLink topic={item.topic} color="green" emptyText="未设置订阅" /><Text type="secondary">{getProcessorSummary(processors)}</Text></Space>}
-                />
-              </List.Item>
-            );
-          }}
-        />
-      </Card>
+    <div>
+      <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between' }}>
+        <h3>处理器链</h3>
+        <Space>
+          <Button icon={<ReloadOutlined />} onClick={fetchList}>刷新</Button>
+          <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>新建</Button>
+        </Space>
+      </div>
+      <Table columns={columns} dataSource={list} rowKey="id" loading={loading} size="small" />
 
-      <Card
-        title={selectedItem ? selectedItem.name : '数据处理编辑'}
-        style={{ flex: 1 }}
-        extra={selectedItem ? (
-          <Space>
-            <TopicLink topic={form.getFieldValue('out_topic') || getOutputTopic(selectedProcessors)} color="blue" emptyText="沿用原 Topic" />
-            <Button type="primary" icon={<EditOutlined />} loading={saving} onClick={handleSave}>保存</Button>
-          </Space>
-        ) : undefined}
-        bodyStyle={{ height: 'calc(100vh - 210px)', overflow: 'auto' }}
+      <Modal
+        title={editItem ? '编辑处理器链' : '新建处理器链'}
+        open={modalVisible}
+        onOk={handleSubmit}
+        onCancel={() => setModalVisible(false)}
+        width={640}
+        okText={editItem ? '保存' : '创建'}
+        destroyOnClose
       >
-        {!selectedItem ? (
-          <Empty description="请先从左侧选择或新建一条数据处理规则" />
-        ) : (
-          <Form form={form} layout="vertical">
-            <Form.Item name="name" label="名称" rules={[{ required: true, message: '请输入名称' }]}>
-              <Input placeholder="例如：温度数据过滤" />
-            </Form.Item>
-            <Form.Item name="topic" label="订阅 Topic" rules={[{ required: true, message: '请输入订阅 Topic' }]}>
-              <Input placeholder="例如：device.temp.raw" />
-            </Form.Item>
-            {selectedProcessorKey !== 'script' && (
-              <Form.Item name="out_topic" label="输出 Topic" tooltip="处理后输出到该 Topic；留空则沿用处理器内部返回或原 Topic">
-                <Input placeholder="例如：device.temp.cleaned" />
+        <Form form={form} layout="vertical">
+          <Form.Item name="name" label="名称" rules={[{ required: true, message: '请输入名称' }]}>
+            <Input placeholder="例如：温度数据过滤" />
+          </Form.Item>
+          <Form.Item name="kind" label="容器类型" rules={[{ required: true, message: '请选择容器类型' }]} tooltip="脚本链用 Deal 函数处理消息；内置链选择一个内置处理器">
+            <Select
+              options={CHAIN_KIND_OPTIONS}
+              onChange={(value) => {
+                // 切换类型时清空对应草稿
+                if (value === CHAIN_KIND_SCRIPT) {
+                  setBuiltinKey('');
+                  setBuiltinConfig({});
+                  setPluginName('');
+                  setPluginParams({});
+                } else if (value === CHAIN_KIND_PLUGIN) {
+                  setBuiltinKey('');
+                  setBuiltinConfig({});
+                  setScriptDraft('');
+                } else {
+                  setScriptDraft('');
+                  setPluginName('');
+                  setPluginParams({});
+                }
+              }}
+            />
+          </Form.Item>
+          <Form.Item name="topic" label="订阅 Topic" rules={[{ required: true, message: '请输入订阅 Topic' }]}>
+            <Input placeholder="例如：device.temp.raw" />
+          </Form.Item>
+          <Form.Item name="out_topic" label="发布 Topic" tooltip="处理完成后默认发布到此 topic；留空则沿用处理器内部返回或原 topic">
+            <Input placeholder="例如：device.temp.cleaned" />
+          </Form.Item>
+
+          {selectedKind === CHAIN_KIND_SCRIPT && (
+            <>
+              <div style={{ marginBottom: 8, color: '#8c8c8c', fontSize: 12 }}>
+                脚本处理器链：通过 Deal 函数处理消息，支持多 topic 输出。点击下方按钮编辑脚本。
+              </div>
+              <Button icon={<CodeOutlined />} onClick={handleEditScriptInModal} block>
+                {scriptDraft ? '编辑脚本（已编辑）' : '编辑脚本'}
+              </Button>
+              {!scriptDraft && !editItem && (
+                <div style={{ marginTop: 4, color: '#faad14', fontSize: 12 }}>
+                  未编辑脚本将使用默认模板创建
+                </div>
+              )}
+            </>
+          )}
+
+          {selectedKind === CHAIN_KIND_BUILTIN && (
+            <>
+              <Form.Item label="处理器类型" required tooltip="一个容器只选一个处理器；多个处理请在数据流上串联多个容器">
+                <Select
+                  placeholder="选择内置处理器"
+                  value={builtinKey || undefined}
+                  onChange={(key) => {
+                    setBuiltinKey(key);
+                    setBuiltinConfig(buildDefaultConfig(key));
+                  }}
+                  options={PROCESSOR_TYPES.map((p) => ({ label: p.name, value: p.key }))}
+                />
               </Form.Item>
-            )}
-            <Form.Item name="mode" label="模式" rules={[{ required: true, message: '请选择模式' }]}>
-              <Select onChange={handleModeChange} options={[{ value: SIMPLE_MODE, label: '简单模式' }, { value: ADVANCED_MODE, label: '高级模式' }]} />
-            </Form.Item>
-            <Form.Item name="enable" label="启用状态" valuePropName="checked">
-              <Switch />
-            </Form.Item>
-            {selectedMode === ADVANCED_MODE ? renderAdvancedProcessorForm() : renderSimpleProcessorForm()}
-          </Form>
-        )}
-      </Card>
+              {builtinKey && (
+                <BuiltinProcessorFields
+                  processorKey={builtinKey}
+                  config={builtinConfig}
+                  onConfigChange={setBuiltinConfig}
+                />
+              )}
+            </>
+          )}
+
+          {selectedKind === CHAIN_KIND_PLUGIN && (
+            <>
+              <Form.Item label="处理器插件" required tooltip="选择已加载的 processor 类型插件；参数依据插件定义动态生成">
+                <Select
+                  placeholder="选择处理器插件"
+                  value={pluginName || undefined}
+                  onChange={(name) => {
+                    setPluginName(name);
+                    const p = processorPlugins.find((x) => x.name === name);
+                    const defaults: Record<string, any> = {};
+                    for (const spec of p?.params || []) {
+                      defaults[spec.key] = spec.default;
+                    }
+                    setPluginParams(defaults);
+                  }}
+                  options={processorPlugins.map((p) => ({ label: p.display || p.name, value: p.name }))}
+                  notFoundContent={processorPlugins.length === 0 ? '暂无已加载的 processor 插件' : undefined}
+                />
+              </Form.Item>
+              {pluginName && currentPluginSpecs.length > 0 && (
+                <div style={{ padding: '8px 12px', background: '#fafafa', border: '1px solid #f0f0f0', borderRadius: 4 }}>
+                  {currentPluginSpecs.map((spec) => {
+                    const label = spec.label || spec.key;
+                    const val = pluginParams[spec.key];
+                    const onChange = (v: any) => setPluginParams({ ...pluginParams, [spec.key]: v });
+                    switch (spec.type) {
+                      case 'int':
+                      case 'number':
+                      case 'float':
+                        return (
+                          <Form.Item key={spec.key} label={label} tooltip={spec.description} required={spec.required} style={{ marginBottom: 8 }}>
+                            <InputNumber
+                              value={val}
+                              min={spec.min !== undefined ? spec.min : undefined}
+                              max={spec.max !== undefined ? spec.max : undefined}
+                              onChange={(v) => onChange(v)}
+                              style={{ width: '100%' }}
+                            />
+                          </Form.Item>
+                        );
+                      case 'bool':
+                        return (
+                          <Form.Item key={spec.key} label={label} tooltip={spec.description} required={spec.required} style={{ marginBottom: 8 }}>
+                            <Switch checked={!!val} onChange={onChange} />
+                          </Form.Item>
+                        );
+                      case 'select':
+                        return (
+                          <Form.Item key={spec.key} label={label} tooltip={spec.description} required={spec.required} style={{ marginBottom: 8 }}>
+                            <Select value={val} onChange={onChange} options={(spec.options || []).map((o) => ({ value: o, label: o }))} allowClear />
+                          </Form.Item>
+                        );
+                      case 'string':
+                      default:
+                        return (
+                          <Form.Item key={spec.key} label={label} tooltip={spec.description} required={spec.required} style={{ marginBottom: 8 }}>
+                            <Input value={val ?? ''} onChange={(e) => onChange(e.target.value)} />
+                          </Form.Item>
+                        );
+                    }
+                  })}
+                </div>
+              )}
+              {pluginName && currentPluginSpecs.length === 0 && (
+                <div style={{ color: '#8c8c8c', fontSize: 12 }}>该插件没有可配置的参数</div>
+              )}
+            </>
+          )}
+
+          <Form.Item name="enable" label="启用状态" valuePropName="checked" style={{ marginTop: 12 }}>
+            <Switch />
+          </Form.Item>
+        </Form>
+      </Modal>
     </div>
   );
 };

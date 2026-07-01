@@ -113,13 +113,13 @@ func (p *ListenerParent) FlatView() ParentFlatView {
 
 // flatConnPayload 兼容旧版前端平铺字段的请求体
 type flatConnPayload struct {
-	ID        int64  `json:"id"`
-	ParentID  int64  `json:"parent_id"`
-	Name      string `json:"name"`
-	Type      string `json:"type"`
-	Enable    bool   `json:"enable"`
-	Topic     string `json:"topic"`
-	OutTopic  string `json:"out_topic"`
+	ID       int64  `json:"id"`
+	ParentID int64  `json:"parent_id"`
+	Name     string `json:"name"`
+	Type     string `json:"type"`
+	Enable   bool   `json:"enable"`
+	Topic    string `json:"topic"`
+	OutTopic string `json:"out_topic"`
 
 	// TCP/UDP
 	Address string `json:"address"`
@@ -134,6 +134,10 @@ type flatConnPayload struct {
 	// MQTT Subscription
 	SubTopic string `json:"sub_topic"`
 	QoS      byte   `json:"qos"`
+
+	// Plugin
+	PluginName string         `json:"plugin_name"`
+	Params     map[string]any `json:"params"`
 
 	// Extra (framing rules etc.)
 	Extra string `json:"extra"`
@@ -209,6 +213,15 @@ func buildConnConfig(flat *flatConnPayload) (string, error) {
 		}
 		b, _ := json.Marshal(MQTTSubConfig{SubTopic: flat.SubTopic, QoS: flat.QoS})
 		return string(b), nil
+	case ConnTypePlugin:
+		if flat.PluginName == "" && len(flat.Params) == 0 {
+			return "", nil
+		}
+		b, _ := json.Marshal(map[string]any{
+			"plugin_name": flat.PluginName,
+			"params":      flat.Params,
+		})
+		return string(b), nil
 	}
 	return "", nil
 }
@@ -229,6 +242,9 @@ type ConnFlatView struct {
 	// MQTT Subscription
 	SubTopic string `json:"sub_topic"`
 	QoS      byte   `json:"qos"`
+	// Plugin
+	PluginName string         `json:"plugin_name"`
+	Params     map[string]any `json:"params"`
 }
 
 // FlatView 展开子连接，兼容前端平铺字段渲染
@@ -258,6 +274,14 @@ func (c *ListenerConn) FlatView() ConnFlatView {
 		_ = json.Unmarshal([]byte(c.Config), &cfg)
 		out.SubTopic = cfg.SubTopic
 		out.QoS = cfg.QoS
+	case ConnTypePlugin:
+		var cfg struct {
+			PluginName string         `json:"plugin_name"`
+			Params     map[string]any `json:"params"`
+		}
+		_ = json.Unmarshal([]byte(c.Config), &cfg)
+		out.PluginName = cfg.PluginName
+		out.Params = cfg.Params
 	}
 	return out
 }

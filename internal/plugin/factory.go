@@ -102,11 +102,31 @@ func InvokePush(ctx context.Context, p *Plugin, payload []byte, topic string, me
 }
 
 // RunListener / RunTask 没有超时（长生命周期）；调用方负责 ctx
-func RunListener(ctx context.Context, p *Plugin, params map[string]any, emit EmitFunc) error {
-	if p == nil || p.RunListener == nil {
+func RunListener(p *Plugin) error {
+	if p == nil || p.Run == nil {
 		return fmt.Errorf("nil listener plugin")
 	}
-	return invokeSafely(func() error { return p.RunListener(ctx, params, emit) })
+	return invokeSafely(func() error { return p.Run() })
+}
+
+func ReadListener(p *Plugin) ([]byte, error) {
+	if p == nil || p.Read == nil {
+		return nil, fmt.Errorf("nil listener plugin")
+	}
+	var data []byte
+	err := invokeSafely(func() error {
+		var readErr error
+		data, readErr = p.Read()
+		return readErr
+	})
+	return data, err
+}
+
+func WriteListener(p *Plugin, data []byte) error {
+	if p == nil || p.Write == nil {
+		return nil
+	}
+	return invokeSafely(func() error { return p.Write(data) })
 }
 
 func RunTask(ctx context.Context, p *Plugin, params map[string]any) error {

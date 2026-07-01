@@ -2,6 +2,7 @@ import React from 'react';
 import { Form, Input, InputNumber, Select, Switch } from 'antd';
 import type { FieldSpec } from './fieldSchema';
 import ScriptFormField from '../../components/ScriptFormField';
+import { PluginParamRenderer, PluginSelect } from '../../components/PluginParamRenderer';
 
 interface Props {
   spec: FieldSpec;
@@ -11,6 +12,7 @@ interface Props {
 // 按 FieldSpec.type 渲染对应 Form.Item + 控件
 export const FieldRenderer: React.FC<Props> = ({ spec, form }) => {
   const rules = spec.required ? [{ required: true, message: `请输入${spec.label}` }] : undefined;
+  const pluginName = Form.useWatch('plugin_name', form);
   switch (spec.type) {
     case 'number':
       return (
@@ -66,14 +68,25 @@ export const FieldRenderer: React.FC<Props> = ({ spec, form }) => {
         />
       );
     case 'pluginParams':
-      // 横切阶段占位：listener 用不到，chain 阶段接入 PluginParamRenderer
       return (
         <Form.Item key={spec.key} label={spec.label} tooltip={spec.tooltip}>
-          <span style={{ color: '#999' }}>插件参数编辑将在处理器链模块阶段启用</span>
+          <PluginParamRenderer
+            pluginType={spec.pluginType || 'listener'}
+            form={form}
+            namePrefix={['params']}
+            selectedName={pluginName}
+          />
         </Form.Item>
       );
     case 'string':
     default:
+      if (spec.key === 'plugin_name' && spec.pluginType) {
+        return (
+          <Form.Item key={spec.key} name={spec.key} label={spec.label} rules={rules} tooltip={spec.tooltip}>
+            <PluginSelect pluginType={spec.pluginType} placeholder={spec.placeholder || '选择监听插件'} />
+          </Form.Item>
+        );
+      }
       return (
         <Form.Item key={spec.key} name={spec.key} label={spec.label} rules={rules} tooltip={spec.tooltip}>
           <Input placeholder={spec.placeholder} />

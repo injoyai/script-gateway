@@ -11,17 +11,53 @@ interface Props {
 
 // 插件参数动态渲染：基于后端 PluginParamSpec 生成表单控件
 // 横切阶段抽取自 ProcessorChainManager，供后续 chain 模块阶段复用
-export const PluginParamRenderer: React.FC<Props> = ({ pluginType, namePrefix = ['plugin_params'], selectedName }) => {
+const usePluginsByType = (pluginType: string) => {
   const [plugins, setPlugins] = useState<PluginInfo[]>([]);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | undefined>();
 
   useEffect(() => {
     setLoading(true);
+    setError(undefined);
     listPluginsByType(pluginType)
       .then(list => { setPlugins(list || []); })
-      .catch(() => { setPlugins([]); })
+      .catch(e => {
+        console.error(`[usePluginsByType] 加载 ${pluginType} 插件列表失败:`, e);
+        setPlugins([]);
+        setError(e?.message || String(e));
+      })
       .finally(() => { setLoading(false); });
   }, [pluginType]);
+
+  return { plugins, loading, error };
+};
+
+interface PluginSelectProps {
+  pluginType: string;
+  placeholder?: string;
+}
+
+export const PluginSelect: React.FC<PluginSelectProps> = ({ pluginType, placeholder }) => {
+  const { plugins, loading, error } = usePluginsByType(pluginType);
+  const notFound = error
+    ? `加载失败: ${error}`
+    : loading
+      ? '加载中...'
+      : plugins.length === 0
+        ? `暂无已加载的 ${pluginType} 插件`
+        : undefined;
+  return (
+    <Select
+      placeholder={placeholder || '选择插件'}
+      loading={loading}
+      options={plugins.map(p => ({ value: p.name, label: p.display || p.name }))}
+      notFoundContent={notFound}
+    />
+  );
+};
+
+export const PluginParamRenderer: React.FC<Props> = ({ pluginType, namePrefix = ['plugin_params'], selectedName }) => {
+  const { plugins, loading } = usePluginsByType(pluginType);
 
   const specs = useMemo<PluginParamSpec[]>(() => {
     const found = plugins.find(p => p.name === selectedName);

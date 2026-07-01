@@ -53,32 +53,34 @@ type lengthFieldConfig struct {
 
 // Manager 管道管理器，统一管理监听父级、连接、处理器链和分发器
 type Manager struct {
-	mu           sync.RWMutex
-	queue        *queue.Queue
-	parents      map[int64]*parentRuntime
-	listeners    map[int64]listen.Listener
-	dispatchers  map[int64]push.Dispatcher
-	pipelines    map[int64]*decode.Pipeline
-	cancels      map[int64]context.CancelFunc
-	framing      map[int64]*framingState
-	parentErrors map[int64]string
-	connErrors   map[int64]string
-	taskCancels  map[string]context.CancelFunc
-	taskErrors   map[string]string
+	mu             sync.RWMutex
+	queue          *queue.Queue
+	parents        map[int64]*parentRuntime
+	listeners      map[int64]listen.Listener
+	dispatchers    map[int64]push.Dispatcher
+	dispatcherSubs map[int64]*queue.Subscriber
+	pipelines      map[int64]*decode.Pipeline
+	cancels        map[int64]context.CancelFunc
+	framing        map[int64]*framingState
+	parentErrors   map[int64]string
+	connErrors     map[int64]string
+	taskCancels    map[string]context.CancelFunc
+	taskErrors     map[string]string
 }
 
 var Default = &Manager{
-	queue:        queue.New(100),
-	parents:      make(map[int64]*parentRuntime),
-	listeners:    make(map[int64]listen.Listener),
-	dispatchers:  make(map[int64]push.Dispatcher),
-	pipelines:    make(map[int64]*decode.Pipeline),
-	cancels:      make(map[int64]context.CancelFunc),
-	framing:      make(map[int64]*framingState),
-	parentErrors: make(map[int64]string),
-	connErrors:   make(map[int64]string),
-	taskCancels:  make(map[string]context.CancelFunc),
-	taskErrors:   make(map[string]string),
+	queue:          queue.New(100),
+	parents:        make(map[int64]*parentRuntime),
+	listeners:      make(map[int64]listen.Listener),
+	dispatchers:    make(map[int64]push.Dispatcher),
+	dispatcherSubs: make(map[int64]*queue.Subscriber),
+	pipelines:      make(map[int64]*decode.Pipeline),
+	cancels:        make(map[int64]context.CancelFunc),
+	framing:        make(map[int64]*framingState),
+	parentErrors:   make(map[int64]string),
+	connErrors:     make(map[int64]string),
+	taskCancels:    make(map[string]context.CancelFunc),
+	taskErrors:     make(map[string]string),
 }
 
 // Queue 返回内部消息队列实例
@@ -692,6 +694,7 @@ func (m *Manager) StartDispatcher(cfg *model.DispatcherConfig) error {
 			OwnerType: "dispatcher",
 			OwnerID:   cfg.ID,
 		})
+		m.dispatcherSubs[cfg.ID] = sub
 		go func(ch <-chan *types.Message, d push.Dispatcher, sub *queue.Subscriber) {
 			for msg := range ch {
 				sub.RecordDequeue()
@@ -712,6 +715,10 @@ func (m *Manager) StopDispatcher(id int64) {
 		d.Close()
 		delete(m.dispatchers, id)
 	}
+	if sub, ok := m.dispatcherSubs[id]; ok {
+		m.queue.UnsubscribeSub(sub)
+		delete(m.dispatcherSubs, id)
+	}
 }
 
 func (m *Manager) StopAll() {
@@ -724,6 +731,10 @@ func (m *Manager) StopAll() {
 	for id, d := range m.dispatchers {
 		d.Close()
 		delete(m.dispatchers, id)
+	}
+	for id, sub := range m.dispatcherSubs {
+		m.queue.UnsubscribeSub(sub)
+		delete(m.dispatcherSubs, id)
 	}
 	for id, cancel := range m.cancels {
 		cancel()
@@ -891,6 +902,16 @@ func createConnListener(cfg *model.ListenerConn) (listen.Listener, error) {
 		var c model.ScriptConnConfig
 		_ = json.Unmarshal([]byte(cfg.Config), &c)
 		return listen.NewScriptListener(c.Content, cfg.Topic), nil
+	case model.ConnTypePlugin:
+		var c struct {
+			PluginName string         `json:"plugin_name"`
+			Params     map[string]any `json:"params"`
+		}
+		_ = json.Unmarshal([]byte(cfg.Config), &c)
+		if c.PluginName == "" {
+			return nil, fmt.Errorf("plugin_name 不能为空")
+		}
+		return listen.NewPluginListener(c.PluginName, c.Params, cfg.Topic), nil
 	default:
 		return nil, fmt.Errorf("unsupported conn type: %s", cfg.Type)
 	}

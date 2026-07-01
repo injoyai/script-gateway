@@ -44,9 +44,9 @@ const cnSeg = (seg: string) => {
     monitor: '实时监控',
     queue: '消息队列',
     unified: '统一管理',
-    'processor-chains': '脚本处理',
+    'processor-chains': '数据处理',
     'data-flow': '数据流可视化',
-    dispatchers: '分发器管理',
+    dispatchers: '数据转发',
     'data-listener': '数据监听',
     http: 'HTTP',
     mqtt: 'MQTT',
@@ -54,6 +54,7 @@ const cnSeg = (seg: string) => {
     udp: 'UDP',
     serial: '串口',
     script: '脚本',
+    plugin: '插件',
     parser: '数据解析',
     scripts: '脚本',
     collection: '脚本采集',
@@ -319,29 +320,9 @@ const MainLayout: React.FC = () => {
             )}
             <Menu theme="light" selectedKeys={[location.pathname]} mode="inline" onClick={handleMenuClick}>
               <Menu.Item key="/dashboard" icon={<PieChartOutlined />}>总览</Menu.Item>
+              <Menu.Item key="/unified/data-flow" icon={<PartitionOutlined />}>数据流可视化</Menu.Item>
               <Menu.Item key="/data/monitor" icon={<LineChartOutlined />}>实时监控</Menu.Item>
               <Menu.Item key="/data/queue" icon={<InboxOutlined />}>消息队列</Menu.Item>
-            </Menu>
-
-            {!collapsed && (
-              <div
-                style={{
-                  padding: '14px 22px 6px',
-                  fontSize: 10.5,
-                  color: 'var(--ink-3)',
-                  letterSpacing: '0.36em',
-                  textTransform: 'uppercase',
-                  fontWeight: 600,
-                  fontFamily: 'var(--font-num)',
-                }}
-              >
-                统一管理 · Unified
-              </div>
-            )}
-            <Menu theme="light" selectedKeys={[location.pathname]} mode="inline" onClick={handleMenuClick}>
-              <Menu.Item key="/unified/data-flow" icon={<PartitionOutlined />}>数据流可视化</Menu.Item>
-              <Menu.Item key="/unified/processor-chains" icon={<ApiOutlined />}>脚本处理</Menu.Item>
-              <Menu.Item key="/unified/dispatchers" icon={<SendOutlined />}>分发器管理</Menu.Item>
             </Menu>
 
             {!collapsed && (
@@ -367,6 +348,7 @@ const MainLayout: React.FC = () => {
                 <Menu.Item key="/data-listener/udp">UDP 监听</Menu.Item>
                 <Menu.Item key="/data-listener/serial">串口监听</Menu.Item>
                 <Menu.Item key="/data-listener/script">脚本监听</Menu.Item>
+                <Menu.Item key="/data-listener/plugin">插件监听</Menu.Item>
                 <Menu.Item key="/data-listener/parser">数据解析</Menu.Item>
               </SubMenu>
               <SubMenu key="sub1" icon={<DesktopOutlined />} title="数据采集">
@@ -382,11 +364,8 @@ const MainLayout: React.FC = () => {
                 <Menu.Item key="/data-services/mqtt-broker">MQTT 代理</Menu.Item>
                 <Menu.Item key="/scripts/services">脚本服务</Menu.Item>
               </SubMenu>
-              <SubMenu key="sub3" icon={<SendOutlined />} title="数据转发">
-                <Menu.Item key="/data-forwarding/mqtt" icon={<CloudServerOutlined />}>MQTT 转发</Menu.Item>
-                <Menu.Item key="/data-forwarding/http">HTTP 转发</Menu.Item>
-                <Menu.Item key="/data-forwarding/scripts" icon={<FileTextOutlined />}>脚本转发</Menu.Item>
-              </SubMenu>
+              <Menu.Item key="/unified/processor-chains" icon={<ApiOutlined />}>数据处理</Menu.Item>
+              <Menu.Item key="/unified/dispatchers" icon={<SendOutlined />}>数据转发</Menu.Item>
             </Menu>
 
             {!collapsed && (

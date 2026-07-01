@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Modal, Form, Input, Button, Space, message } from 'antd';
+import { Modal, Form, Input, InputNumber, Button, Space, Select, Switch, message } from 'antd';
 import { CodeOutlined } from '@ant-design/icons';
 import {
   type ListenerParentItem,
@@ -15,8 +15,16 @@ import {
   updateViewer,
   updateMocker,
 } from '../../services/dataFlowApi';
+import { listPluginsByType, type PluginInfo, type PluginParamSpec } from '../../services/pluginApi';
 import useScriptEditorStore from '../../store/useScriptEditorStore';
 import { SectionTitle, TopicMultiSelect } from './FlowNodes';
+import {
+  PROCESSOR_TYPES,
+  findProcessorType,
+  buildDefaultConfig,
+  parseSingleProcessor,
+  serializeSingleProcessor,
+} from './processorSchema';
 
 export type EditTarget =
   | { kind: 'listenerParent'; data: ListenerParentItem }
@@ -45,7 +53,37 @@ const parseJSON = (s?: string): any => {
 export const InlineEditPanel: React.FC<Props> = ({ target, onClose, onSaved, onAdvancedEdit }) => {
   const [form] = Form.useForm();
   const [saving, setSaving] = useState(false);
+  // 内置处理器链：当前选中的处理器 key 和 config（编辑时回填，保存时序列化为 processors JSON）
+  const [builtinKey, setBuiltinKey] = useState<string>('');
+  const [builtinConfig, setBuiltinConfig] = useState<Record<string, any>>({});
+  // 插件容器：当前插件名和参数
+  const [pluginName, setPluginName] = useState<string>('');
+  const [pluginParams, setPluginParams] = useState<Record<string, any>>({});
+  const [listenerPlugins, setListenerPlugins] = useState<PluginInfo[]>([]);
+  const [processorPlugins, setProcessorPlugins] = useState<PluginInfo[]>([]);
+  const [pusherPlugins, setPusherPlugins] = useState<PluginInfo[]>([]);
   const openScriptEditor = useScriptEditorStore((s) => s.openEditor);
+
+  const currentListenerPluginSpecs = (listenerPlugins.find((p) => p.name === pluginName)?.params || []) as PluginParamSpec[];
+  const currentProcessorPluginSpecs = (processorPlugins.find((p) => p.name === pluginName)?.params || []) as PluginParamSpec[];
+  const currentPusherPluginSpecs = (pusherPlugins.find((p) => p.name === pluginName)?.params || []) as PluginParamSpec[];
+
+  useEffect(() => {
+    void (async () => {
+      try {
+        const [listeners, processors, pushers] = await Promise.all([
+          listPluginsByType('listener'),
+          listPluginsByType('processor'),
+          listPluginsByType('pusher'),
+        ]);
+        setListenerPlugins(listeners || []);
+        setProcessorPlugins(processors || []);
+        setPusherPlugins(pushers || []);
+      } catch (e: any) {
+        console.error('[InlineEditPanel] 加载插件列表失败:', e);
+      }
+    })();
+  }, []);
 
   // 从处理器链的 processors 字段中提取 script 处理器的脚本内容
   const extractChainScript = (processorsRaw?: string): { script: string; hasScript: boolean } => {
@@ -147,7 +185,26 @@ export const InlineEditPanel: React.FC<Props> = ({ target, onClose, onSaved, onA
       form.setFieldsValue({
         name: d.name,
         topic: d.topic,
+        out_topic: d.out_topic,
       });
+      // 回填内置处理器 / 插件处理器
+      const parsed = parseSingleProcessor(d.processors);
+      if (parsed && parsed.key === 'plugin') {
+        setBuiltinKey('');
+        setBuiltinConfig({});
+        setPluginName(parsed.config?.plugin_name || '');
+        setPluginParams(parsed.config?.params || {});
+      } else if (parsed && parsed.key !== 'script') {
+        setBuiltinKey(parsed.key);
+        setBuiltinConfig(parsed.config || buildDefaultConfig(parsed.key));
+        setPluginName('');
+        setPluginParams({});
+      } else {
+        setBuiltinKey('');
+        setBuiltinConfig({});
+        setPluginName('');
+        setPluginParams({});
+      }
     } else if (target.kind === 'dispatcher') {
       const d = target.data;
       const cfg = parseJSON(d.config);
@@ -166,6 +223,10 @@ export const InlineEditPanel: React.FC<Props> = ({ target, onClose, onSaved, onA
         address: cfg.address,
         plugin_name: cfg.plugin_name,
       });
+      if (d.type === 'plugin') {
+        setPluginName(cfg.plugin_name || '');
+        setPluginParams(cfg.params || {});
+      }
     } else if (target.kind === 'viewer') {
       const d = target.data;
       const topics = parseJSON(d.topics);
@@ -207,6 +268,10 @@ export const InlineEditPanel: React.FC<Props> = ({ target, onClose, onSaved, onA
       } else if (target.kind === 'listener') {
         const d = target.data;
         const cfg: any = {};
+        if (d.type === 'plugin') {
+          cfg.plugin_name = pluginName || values.plugin_name;
+          cfg.params = pluginParams;
+        }
         if (values.address) cfg.address = values.address;
         if (values.port) cfg.port = values.port;
         if (values.baud_rate) cfg.baud_rate = values.baud_rate;
@@ -227,12 +292,49 @@ export const InlineEditPanel: React.FC<Props> = ({ target, onClose, onSaved, onA
         });
       } else if (target.kind === 'chain') {
         const d = target.data;
-        await updateProcessorChain({
+        const { hasScript } = extractChainScript(d.processors);
+        const payload: any = {
           id: d.id,
           name: values.name,
           topic: values.topic,
           out_topic: values.out_topic,
-        });
+        };
+        // 脚本链：保留原 processors（脚本由「编辑脚本」按钮修改）
+        // 插件链：序列化 plugin 处理器
+        // 内置链：序列化当前选择的处理器为 processors JSON
+        if (!hasScript) {
+          if (pluginName) {
+            payload.processors = JSON.stringify([
+              { key: 'plugin', config: JSON.stringify({ plugin_name: pluginName, params: pluginParams }) },
+            ]);
+          } else {
+            if (!builtinKey) {
+              message.error('请选择处理器类型');
+              return;
+            }
+            // JSON 字段：把字符串解析回对象，避免存双重 JSON
+            const spec = findProcessorType(builtinKey);
+            const finalConfig: Record<string, any> = { ...builtinConfig };
+            if (spec) {
+              for (const f of spec.fields) {
+                if (f.type === 'json' && typeof finalConfig[f.key] === 'string' && finalConfig[f.key].trim() !== '') {
+                  try {
+                    finalConfig[f.key] = JSON.parse(finalConfig[f.key]);
+                  } catch {
+                    message.error(`字段「${f.label}」不是合法 JSON`);
+                    return;
+                  }
+                }
+              }
+            }
+            payload.processors = serializeSingleProcessor(builtinKey, finalConfig);
+          }
+        }
+        await updateProcessorChain(payload);
+        // 同步本地 target 数据，避免后续保存覆盖
+        if (!hasScript && payload.processors) {
+          d.processors = payload.processors;
+        }
       } else if (target.kind === 'dispatcher') {
         const d = target.data;
         const topics = Array.isArray(values.topic_list) ? values.topic_list : [];
@@ -256,7 +358,8 @@ export const InlineEditPanel: React.FC<Props> = ({ target, onClose, onSaved, onA
           if (values.password) cfg.password = values.password;
           if (values.pub_topic) cfg.pub_topic = values.pub_topic;
           if (values.address) cfg.address = values.address;
-          if (values.plugin_name) cfg.plugin_name = values.plugin_name;
+          if (values.plugin_name || pluginName) cfg.plugin_name = pluginName || values.plugin_name;
+          if (d.type === 'plugin') cfg.params = pluginParams;
           await updateDispatcher({
             id: d.id,
             name: values.name,
@@ -357,10 +460,94 @@ export const InlineEditPanel: React.FC<Props> = ({ target, onClose, onSaved, onA
             <Form.Item name="out_topic" label="发布 Topic" tooltip="处理完成后默认发布到此 topic；留空则沿用处理器内部返回或原 topic">
               <Input placeholder="例如：device/cleaned" />
             </Form.Item>
-            {extractChainScript(target.data.processors).hasScript && (
+            {extractChainScript(target.data.processors).hasScript ? (
               <Button icon={<CodeOutlined />} onClick={handleEditChainScript} block>
                 编辑脚本
               </Button>
+            ) : pluginName ? (
+              <>
+                <Form.Item label="处理器插件" required>
+                  <Select
+                    value={pluginName || undefined}
+                    onChange={(name) => {
+                      setPluginName(name);
+                      const p = processorPlugins.find((x) => x.name === name);
+                      const defaults: Record<string, any> = {};
+                      for (const spec of p?.params || []) defaults[spec.key] = pluginParams[spec.key] ?? spec.default;
+                      setPluginParams(defaults);
+                    }}
+                    options={processorPlugins.map((p) => ({ value: p.name, label: p.display || p.name }))}
+                  />
+                </Form.Item>
+                {currentProcessorPluginSpecs.length > 0 && (
+                  <div style={{ padding: '8px 12px', background: '#fafafa', border: '1px solid #f0f0f0', borderRadius: 4, marginBottom: 8 }}>
+                    {currentProcessorPluginSpecs.map((spec) => (
+                      <Form.Item key={spec.key} label={spec.label || spec.key} tooltip={spec.description} required={spec.required} style={{ marginBottom: 8 }}>
+                        {spec.type === 'int' || spec.type === 'number' || spec.type === 'float' ? (
+                          <InputNumber value={pluginParams[spec.key]} min={spec.min} max={spec.max} onChange={(v) => setPluginParams((c) => ({ ...c, [spec.key]: v }))} style={{ width: '100%' }} />
+                        ) : spec.type === 'bool' ? (
+                          <Switch checked={!!pluginParams[spec.key]} onChange={(v) => setPluginParams((c) => ({ ...c, [spec.key]: v }))} />
+                        ) : spec.type === 'select' ? (
+                          <Select value={pluginParams[spec.key]} onChange={(v) => setPluginParams((c) => ({ ...c, [spec.key]: v }))} options={(spec.options || []).map((o) => ({ value: o, label: o }))} allowClear />
+                        ) : (
+                          <Input value={pluginParams[spec.key] ?? ''} onChange={(e) => setPluginParams((c) => ({ ...c, [spec.key]: e.target.value }))} />
+                        )}
+                      </Form.Item>
+                    ))}
+                  </div>
+                )}
+              </>
+            ) : (
+              <>
+                <Form.Item label="处理器类型" required tooltip="一个容器只选一个处理器；多个处理请在数据流上串联多个容器">
+                  <Select
+                    placeholder="选择内置处理器"
+                    value={builtinKey || undefined}
+                    onChange={(key) => {
+                      setBuiltinKey(key);
+                      setBuiltinConfig(buildDefaultConfig(key));
+                    }}
+                    options={PROCESSOR_TYPES.map((p) => ({ label: p.name, value: p.key }))}
+                  />
+                </Form.Item>
+                {builtinKey && findProcessorType(builtinKey) && (
+                  <div style={{ padding: '8px 12px', background: '#fafafa', border: '1px solid #f0f0f0', borderRadius: 4, marginBottom: 8 }}>
+                    {findProcessorType(builtinKey)!.fields.map((f) => (
+                      <Form.Item
+                        key={f.key}
+                        label={f.label}
+                        tooltip={f.tooltip}
+                        required={f.required}
+                        style={{ marginBottom: 8 }}
+                      >
+                        {f.type === 'switch' ? (
+                          <Switch
+                            checked={!!builtinConfig[f.key]}
+                            onChange={(checked) => setBuiltinConfig((c) => ({ ...c, [f.key]: checked }))}
+                          />
+                        ) : f.type === 'textarea' || f.type === 'json' ? (
+                          <Input.TextArea
+                            rows={3}
+                            placeholder={f.placeholder || (f.type === 'json' ? '{}' : '')}
+                            value={
+                              f.type === 'json' && builtinConfig[f.key] && typeof builtinConfig[f.key] === 'object'
+                                ? JSON.stringify(builtinConfig[f.key], null, 2)
+                                : (builtinConfig[f.key] ?? '')
+                            }
+                            onChange={(e) => setBuiltinConfig((c) => ({ ...c, [f.key]: e.target.value }))}
+                          />
+                        ) : (
+                          <Input
+                            placeholder={f.placeholder}
+                            value={builtinConfig[f.key] ?? ''}
+                            onChange={(e) => setBuiltinConfig((c) => ({ ...c, [f.key]: e.target.value }))}
+                          />
+                        )}
+                      </Form.Item>
+                    ))}
+                  </div>
+                )}
+              </>
             )}
           </>
         )}
@@ -426,6 +613,41 @@ export const InlineEditPanel: React.FC<Props> = ({ target, onClose, onSaved, onA
           </>
         )}
 
+        {target.kind === 'listener' && target.data.type === 'plugin' && (
+          <>
+            <Form.Item name="plugin_name" label="插件名" rules={[{ required: true, message: '请选择插件' }]}>
+              <Select
+                value={pluginName || undefined}
+                onChange={(name) => {
+                  setPluginName(name);
+                  const p = listenerPlugins.find((x) => x.name === name);
+                  const defaults: Record<string, any> = {};
+                  for (const spec of p?.params || []) defaults[spec.key] = pluginParams[spec.key] ?? spec.default;
+                  setPluginParams(defaults);
+                }}
+                options={listenerPlugins.map((p) => ({ value: p.name, label: p.display || p.name }))}
+              />
+            </Form.Item>
+            {currentListenerPluginSpecs.length > 0 && (
+              <div style={{ padding: '8px 12px', background: '#fafafa', border: '1px solid #f0f0f0', borderRadius: 4, marginBottom: 8 }}>
+                {currentListenerPluginSpecs.map((spec) => (
+                  <Form.Item key={spec.key} label={spec.label || spec.key} tooltip={spec.description} required={spec.required} style={{ marginBottom: 8 }}>
+                    {spec.type === 'int' || spec.type === 'number' || spec.type === 'float' ? (
+                      <InputNumber value={pluginParams[spec.key]} min={spec.min} max={spec.max} onChange={(v) => setPluginParams((c) => ({ ...c, [spec.key]: v }))} style={{ width: '100%' }} />
+                    ) : spec.type === 'bool' ? (
+                      <Switch checked={!!pluginParams[spec.key]} onChange={(v) => setPluginParams((c) => ({ ...c, [spec.key]: v }))} />
+                    ) : spec.type === 'select' ? (
+                      <Select value={pluginParams[spec.key]} onChange={(v) => setPluginParams((c) => ({ ...c, [spec.key]: v }))} options={(spec.options || []).map((o) => ({ value: o, label: o }))} allowClear />
+                    ) : (
+                      <Input value={pluginParams[spec.key] ?? ''} onChange={(e) => setPluginParams((c) => ({ ...c, [spec.key]: e.target.value }))} />
+                    )}
+                  </Form.Item>
+                ))}
+              </div>
+            )}
+          </>
+        )}
+
         {target.kind === 'dispatcher' && target.data.type === 'http' && (
           <>
             <Form.Item name="url" label="URL"><Input placeholder="http://example.com/api" /></Form.Item>
@@ -445,7 +667,38 @@ export const InlineEditPanel: React.FC<Props> = ({ target, onClose, onSaved, onA
           <Form.Item name="address" label="地址"><Input placeholder="ws://127.0.0.1:8080/ws" /></Form.Item>
         )}
         {target.kind === 'dispatcher' && target.data.type === 'plugin' && (
-          <Form.Item name="plugin_name" label="插件名"><Input /></Form.Item>
+          <>
+            <Form.Item name="plugin_name" label="插件名" rules={[{ required: true, message: '请选择插件' }]}>
+              <Select
+                value={pluginName || undefined}
+                onChange={(name) => {
+                  setPluginName(name);
+                  const p = pusherPlugins.find((x) => x.name === name);
+                  const defaults: Record<string, any> = {};
+                  for (const spec of p?.params || []) defaults[spec.key] = pluginParams[spec.key] ?? spec.default;
+                  setPluginParams(defaults);
+                }}
+                options={pusherPlugins.map((p) => ({ value: p.name, label: p.display || p.name }))}
+              />
+            </Form.Item>
+            {currentPusherPluginSpecs.length > 0 && (
+              <div style={{ padding: '8px 12px', background: '#fafafa', border: '1px solid #f0f0f0', borderRadius: 4, marginBottom: 8 }}>
+                {currentPusherPluginSpecs.map((spec) => (
+                  <Form.Item key={spec.key} label={spec.label || spec.key} tooltip={spec.description} required={spec.required} style={{ marginBottom: 8 }}>
+                    {spec.type === 'int' || spec.type === 'number' || spec.type === 'float' ? (
+                      <InputNumber value={pluginParams[spec.key]} min={spec.min} max={spec.max} onChange={(v) => setPluginParams((c) => ({ ...c, [spec.key]: v }))} style={{ width: '100%' }} />
+                    ) : spec.type === 'bool' ? (
+                      <Switch checked={!!pluginParams[spec.key]} onChange={(v) => setPluginParams((c) => ({ ...c, [spec.key]: v }))} />
+                    ) : spec.type === 'select' ? (
+                      <Select value={pluginParams[spec.key]} onChange={(v) => setPluginParams((c) => ({ ...c, [spec.key]: v }))} options={(spec.options || []).map((o) => ({ value: o, label: o }))} allowClear />
+                    ) : (
+                      <Input value={pluginParams[spec.key] ?? ''} onChange={(e) => setPluginParams((c) => ({ ...c, [spec.key]: e.target.value }))} />
+                    )}
+                  </Form.Item>
+                ))}
+              </div>
+            )}
+          </>
         )}
       </Form>
     </Modal>
