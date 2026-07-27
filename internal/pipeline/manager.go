@@ -962,6 +962,8 @@ func createDispatcher(cfg *model.DispatcherConfig) (push.Dispatcher, error) {
 			return nil, fmt.Errorf("plugin_name 不能为空")
 		}
 		return push.NewPluginPusher(c.PluginName, c.Params, topics), nil
+	case model.DispatcherTypeStdout:
+		return push.NewStdoutDispatcher(topics), nil
 	default:
 		return nil, fmt.Errorf("unsupported dispatcher type: %s", cfg.Type)
 	}
