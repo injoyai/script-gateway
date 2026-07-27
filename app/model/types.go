@@ -25,6 +25,7 @@ const (
 	DispatcherTypeWebsocket = "websocket"
 	DispatcherTypeRocketMQ  = "rocketmq"
 	DispatcherTypePlugin    = "plugin"
+	DispatcherTypeStdout    = "stdout"
 )
 
 // 所有合法的 ListenerParent 类型
@@ -52,4 +53,5 @@ var ValidDispatcherTypes = []string{
 	DispatcherTypeWebsocket,
 	DispatcherTypeRocketMQ,
 	DispatcherTypePlugin,
+	DispatcherTypeStdout,
 }
