@@ -25,6 +25,7 @@ import {
   parseSingleProcessor,
   serializeSingleProcessor,
 } from './processorSchema';
+import { DEFAULT_SCRIPT_CONTENT } from './fieldSchema';
 
 export type EditTarget =
   | { kind: 'listenerParent'; data: ListenerParentItem }
@@ -136,6 +137,35 @@ export const InlineEditPanel: React.FC<Props> = ({ target, onClose, onSaved, onA
     });
   };
 
+  // 打开脚本编辑器编辑脚本监听器（script_conn）的脚本（config.content）
+  const handleEditListenerScript = () => {
+    if (target?.kind !== 'listener' || target.data.type !== 'script_conn') return;
+    const d = target.data;
+    const cfg = parseJSON(d.config);
+    const script = d.content || cfg.content || DEFAULT_SCRIPT_CONTENT;
+    openScriptEditor({
+      name: d.name,
+      content: script,
+      language: 'go',
+      onSave: async (newContent) => {
+        const newCfg = { ...cfg, content: newContent };
+        await updateListenerConn({
+          id: d.id,
+          name: d.name,
+          topic: d.topic,
+          out_topic: d.out_topic,
+          type: d.type,
+          parent_id: d.parent_id,
+          enable: d.enable,
+          config: JSON.stringify(newCfg),
+          extra: d.extra,
+        });
+        d.config = JSON.stringify(newCfg);
+        onSaved();
+      },
+    });
+  };
+
   // 打开脚本编辑器编辑脚本分发器的脚本（config 字段直接存原始脚本内容）
   const handleEditDispatcherScript = () => {
     if (target?.kind !== 'dispatcher') return;
@@ -163,9 +193,22 @@ export const InlineEditPanel: React.FC<Props> = ({ target, onClose, onSaved, onA
 
   useEffect(() => {
     if (!target) return;
-    if (target.kind === 'listener') {
+    if (target.kind === 'listenerParent') {
       const d = target.data;
       const cfg = parseJSON(d.config);
+      form.setFieldsValue({
+        name: d.name,
+        port: d.port || cfg.port,
+        broker: d.broker || cfg.broker,
+        client_id: d.client_id || cfg.client_id,
+        username: d.username || cfg.username,
+        password: d.password || cfg.password,
+      });
+    } else if (target.kind === 'listener') {
+      const d = target.data;
+      const cfg = parseJSON(d.config);
+      const extra = parseJSON(d.extra);
+      const fr = extra.framing || {};
       form.setFieldsValue({
         name: d.name,
         topic: d.topic,
@@ -175,10 +218,18 @@ export const InlineEditPanel: React.FC<Props> = ({ target, onClose, onSaved, onA
         port: d.port || cfg.port,
         baud_rate: d.baud_rate || cfg.baud_rate,
         path: d.path || cfg.path,
-        methods: d.methods || cfg.methods,
+        methods: ((d.methods || cfg.methods || '') + '').split(',').map((s: string) => s.trim()).filter(Boolean),
         sub_topic: d.sub_topic || cfg.sub_topic,
         qos: d.qos ?? cfg.qos,
         content: d.content || cfg.content,
+        // 分包配置（extra.framing）
+        framing_mode: fr.mode || undefined,
+        framing_delimiter: fr.delimiter || '',
+        framing_length: fr.length,
+        framing_offset: fr.offset,
+        framing_size: fr.size,
+        framing_endian: fr.endian || 'big',
+        framing_include_header: !!fr.include_header,
       });
     } else if (target.kind === 'chain') {
       const d = target.data;
@@ -276,10 +327,31 @@ export const InlineEditPanel: React.FC<Props> = ({ target, onClose, onSaved, onA
         if (values.port) cfg.port = values.port;
         if (values.baud_rate) cfg.baud_rate = values.baud_rate;
         if (values.path) cfg.path = values.path;
-        if (values.methods) cfg.methods = values.methods;
+        if (values.methods && values.methods.length) cfg.methods = values.methods.join(',');
         if (values.sub_topic) cfg.sub_topic = values.sub_topic;
         if (values.qos !== undefined) cfg.qos = values.qos;
-        if (values.content) cfg.content = values.content;
+        if (d.type === 'script_conn') {
+          // 脚本由「编辑监听器脚本」按钮单独保存，这里保留原值避免丢失
+          const oldCfg = parseJSON(d.config);
+          if (oldCfg.content) cfg.content = oldCfg.content;
+        }
+        // 分包配置：组装到 extra.framing（保留 extra 中其它字段）
+        const oldExtra = parseJSON(d.extra);
+        const newExtra: any = { ...oldExtra };
+        if (values.framing_mode) {
+          const framing: any = { mode: values.framing_mode };
+          if (values.framing_mode === 'delimiter') framing.delimiter = values.framing_delimiter || '';
+          if (values.framing_mode === 'fixed_length') framing.length = values.framing_length;
+          if (values.framing_mode === 'length_field') {
+            framing.offset = values.framing_offset || 0;
+            framing.size = values.framing_size || 2;
+            framing.endian = values.framing_endian || 'big';
+            framing.include_header = !!values.framing_include_header;
+          }
+          newExtra.framing = framing;
+        } else {
+          delete newExtra.framing;
+        }
         await updateListenerConn({
           id: d.id,
           name: values.name,
@@ -289,6 +361,7 @@ export const InlineEditPanel: React.FC<Props> = ({ target, onClose, onSaved, onA
           parent_id: d.parent_id,
           enable: d.enable,
           config: JSON.stringify(cfg),
+          extra: JSON.stringify(newExtra),
         });
       } else if (target.kind === 'chain') {
         const d = target.data;
@@ -446,9 +519,11 @@ export const InlineEditPanel: React.FC<Props> = ({ target, onClose, onSaved, onA
             <Form.Item name="out_topic" label="出站 Topic" tooltip="订阅此 topic 的消息推送到连接">
               <Input placeholder="留空则不订阅出站消息" />
             </Form.Item>
-            <Form.Item name="content" label="内容模板" tooltip="可选，配置监听器发送或解析的默认内容">
-              <Input.TextArea rows={4} placeholder="可选内容模板或示例消息" />
-            </Form.Item>
+            {target.data.type === 'script_conn' && (
+              <Button icon={<CodeOutlined />} onClick={handleEditListenerScript} block>
+                编辑监听器脚本
+              </Button>
+            )}
           </>
         )}
 
@@ -588,6 +663,20 @@ export const InlineEditPanel: React.FC<Props> = ({ target, onClose, onSaved, onA
         {/* 类型特定配置 */}
         <SectionTitle title="配置参数" color="purple" />
 
+        {target.kind === 'listenerParent' && target.data.type === 'http_server' && (
+          <Form.Item name="port" label="监听端口" rules={[{ required: true, message: '请输入端口' }]}>
+            <InputNumber min={1} max={65535} style={{ width: '100%' }} placeholder="8080" />
+          </Form.Item>
+        )}
+        {target.kind === 'listenerParent' && target.data.type === 'mqtt_client' && (
+          <>
+            <Form.Item name="broker" label="Broker"><Input placeholder="tcp://127.0.0.1:1883" /></Form.Item>
+            <Form.Item name="client_id" label="Client ID"><Input /></Form.Item>
+            <Form.Item name="username" label="用户名"><Input /></Form.Item>
+            <Form.Item name="password" label="密码"><Input.Password /></Form.Item>
+          </>
+        )}
+
         {target.kind === 'listener' && target.data.type === 'tcp_conn' && (
           <Form.Item name="address" label="监听地址"><Input placeholder="0.0.0.0:8080" /></Form.Item>
         )}
@@ -600,16 +689,61 @@ export const InlineEditPanel: React.FC<Props> = ({ target, onClose, onSaved, onA
             <Form.Item name="baud_rate" label="波特率"><Input placeholder="9600" /></Form.Item>
           </>
         )}
+        {target.kind === 'listener' && ['tcp_conn', 'udp_conn', 'serial_conn'].includes(target.data.type) && (
+          <>
+            <Form.Item name="framing_mode" label="分包模式" tooltip="处理 TCP/串口流式数据粘包；留空表示不分包">
+              <Select allowClear placeholder="不分包" options={[
+                { value: 'delimiter', label: '分隔符' },
+                { value: 'fixed_length', label: '定长' },
+                { value: 'length_field', label: '长度字段' },
+              ]} />
+            </Form.Item>
+            <Form.Item shouldUpdate noStyle>
+              {() => {
+                const mode = form.getFieldValue('framing_mode');
+                if (mode === 'delimiter') return (
+                  <Form.Item name="framing_delimiter" label="分隔符" tooltip="支持 \\r \\n \\t 转义">
+                    <Input placeholder="\r\n" />
+                  </Form.Item>
+                );
+                if (mode === 'fixed_length') return (
+                  <Form.Item name="framing_length" label="定长长度">
+                    <InputNumber min={1} style={{ width: '100%' }} placeholder="例如：16" />
+                  </Form.Item>
+                );
+                if (mode === 'length_field') return (
+                  <>
+                    <Form.Item name="framing_offset" label="偏移量" tooltip="长度字段在帧中的起始偏移">
+                      <InputNumber min={0} style={{ width: '100%' }} placeholder="0" />
+                    </Form.Item>
+                    <Form.Item name="framing_size" label="长度字段尺寸" tooltip="1/2/4 字节">
+                      <Select options={[{ value: 1, label: '1 字节' }, { value: 2, label: '2 字节' }, { value: 4, label: '4 字节' }]} />
+                    </Form.Item>
+                    <Form.Item name="framing_endian" label="字节序">
+                      <Select options={[{ value: 'big', label: '大端' }, { value: 'little', label: '小端' }]} />
+                    </Form.Item>
+                    <Form.Item name="framing_include_header" label="长度含头部" valuePropName="checked">
+                      <Switch />
+                    </Form.Item>
+                  </>
+                );
+                return null;
+              }}
+            </Form.Item>
+          </>
+        )}
         {target.kind === 'listener' && target.data.type === 'http_route' && (
           <>
             <Form.Item name="path" label="路径"><Input placeholder="/api/data" /></Form.Item>
-            <Form.Item name="methods" label="方法"><Input placeholder="POST,GET" /></Form.Item>
+            <Form.Item name="methods" label="方法" tooltip="可多选；不选表示全部方法（ALL）">
+              <Select mode="multiple" allowClear placeholder="不选表示全部" options={[{ value: 'GET', label: 'GET' }, { value: 'POST', label: 'POST' }, { value: 'PUT', label: 'PUT' }, { value: 'DELETE', label: 'DELETE' }, { value: 'PATCH', label: 'PATCH' }]} />
+            </Form.Item>
           </>
         )}
         {target.kind === 'listener' && target.data.type === 'mqtt_subscription' && (
           <>
             <Form.Item name="sub_topic" label="订阅 Topic"><Input /></Form.Item>
-            <Form.Item name="qos" label="QoS"><Input placeholder="0" /></Form.Item>
+            <Form.Item name="qos" label="QoS"><InputNumber min={0} max={2} style={{ width: '100%' }} placeholder="0" /></Form.Item>
           </>
         )}
 
@@ -665,6 +799,11 @@ export const InlineEditPanel: React.FC<Props> = ({ target, onClose, onSaved, onA
         )}
         {target.kind === 'dispatcher' && target.data.type === 'websocket' && (
           <Form.Item name="address" label="地址"><Input placeholder="ws://127.0.0.1:8080/ws" /></Form.Item>
+        )}
+        {target.kind === 'dispatcher' && target.data.type === 'stdout' && (
+          <div style={{ color: '#888', fontSize: 12, padding: '8px 12px', background: '#fafafa', border: '1px solid #f0f0f0', borderRadius: 4 }}>
+            终端分发器：将订阅的消息直接打印到服务端终端（stdout），无需额外配置，用于调试。
+          </div>
         )}
         {target.kind === 'dispatcher' && target.data.type === 'plugin' && (
           <>

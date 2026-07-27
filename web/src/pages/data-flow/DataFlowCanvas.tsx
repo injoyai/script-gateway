@@ -206,8 +206,13 @@ const buildGraph = (data: FlowData, callbacks: {
   for (const parent of data.parents) {
     const childConns = data.conns.filter((conn) => conn.parent_id === parent.id);
     const parentId = `listener-parent-${parent.id}`;
-    const childCount = Math.max(1, childConns.length);
-    const listHeight = childCount * childRowHeight + Math.max(0, childCount - 1) * childRowGap + listPadding;
+    const childCount = childConns.length;
+    // 无子项时渲染“暂无子项”占位符（padding 16px*2 + 文字行高），其高度大于单行子项，
+    // 需单独估算，否则节点高度不足会让底部操作栏（删除/新增/启用）被 overflow:hidden 裁掉
+    const placeholderHeight = 52;
+    const listHeight = childCount === 0
+      ? placeholderHeight + listPadding
+      : childCount * childRowHeight + Math.max(0, childCount - 1) * childRowGap + listPadding;
     const parentHeight = headerHeight + listHeight + footerHeight;
 
     // 构建子项数据
@@ -564,6 +569,7 @@ const CREATE_OPTIONS: CreateOption[] = [
   { key: 'disp-script', label: '脚本分发器', kind: 'dispatcher', type: 'script', group: '分发器' },
   { key: 'disp-rocketmq', label: 'RocketMQ 分发器', kind: 'dispatcher', type: 'rocketmq', group: '分发器' },
   { key: 'disp-plugin', label: '插件分发器', kind: 'dispatcher', type: 'plugin', group: '分发器' },
+  { key: 'disp-stdout', label: '终端分发器', kind: 'dispatcher', type: 'stdout', group: '分发器' },
   // 订阅查看器
   { key: 'viewer', label: '订阅查看器', kind: 'viewer', type: 'viewer', group: '订阅查看器' },
   // 虚拟数据

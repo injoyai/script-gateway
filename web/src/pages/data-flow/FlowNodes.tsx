@@ -9,6 +9,7 @@ import {
   WifiOutlined,
   FileTextOutlined,
   ThunderboltOutlined,
+  CodeOutlined,
   DeleteOutlined,
   EditOutlined,
   EyeOutlined,
@@ -68,30 +69,31 @@ export interface FlowNodeData {
 
 const LISTENER_TYPE_META: Record<string, { icon: React.ReactNode; color: string; label: string }> = {
   tcp_conn:          { icon: <ApiOutlined />,      color: '#3a4f7a', label: 'TCP' },
-  udp_conn:          { icon: <ApiOutlined />,      color: '#3a5a7a', label: 'UDP' },
-  serial_conn:       { icon: <UsbOutlined />,       color: '#5a4a3a', label: '串口' },
-  script_conn:       { icon: <FileTextOutlined />, color: '#4a3a5a', label: '脚本' },
+  udp_conn:          { icon: <ApiOutlined />,      color: '#3a4f7a', label: 'UDP' },
+  serial_conn:       { icon: <UsbOutlined />,       color: '#3a4f7a', label: '串口' },
+  script_conn:       { icon: <FileTextOutlined />, color: '#3a4f7a', label: '脚本' },
   http_route:        { icon: <GlobalOutlined />,    color: '#3a4f7a', label: 'HTTP' },
-  mqtt_subscription: { icon: <WifiOutlined />,     color: '#3a5a4f', label: 'MQTT' },
+  mqtt_subscription: { icon: <WifiOutlined />,     color: '#3a4f7a', label: 'MQTT' },
 };
 
 const DISPATCHER_TYPE_META: Record<string, { icon: React.ReactNode; color: string; label: string }> = {
-  http:      { icon: <GlobalOutlined />,    color: '#b85c00', label: 'HTTP' },
-  mqtt:      { icon: <WifiOutlined />,       color: '#b87a3a', label: 'MQTT' },
-  websocket: { icon: <GlobalOutlined />,    color: '#b89a3a', label: 'WS' },
-  script:    { icon: <FileTextOutlined />, color: '#7a5c00', label: '脚本' },
-  rocketmq:  { icon: <SendOutlined />,       color: '#b83a5a', label: 'RocketMQ' },
-  plugin:    { icon: <ThunderboltOutlined />,color: '#7a3a8a', label: '插件' },
+  http:      { icon: <GlobalOutlined />,    color: '#0f5e4d', label: 'HTTP' },
+  mqtt:      { icon: <WifiOutlined />,       color: '#0f5e4d', label: 'MQTT' },
+  websocket: { icon: <GlobalOutlined />,    color: '#0f5e4d', label: 'WS' },
+  script:    { icon: <FileTextOutlined />, color: '#0f5e4d', label: '脚本' },
+  rocketmq:  { icon: <SendOutlined />,       color: '#0f5e4d', label: 'RocketMQ' },
+  plugin:    { icon: <ThunderboltOutlined />,color: '#0f5e4d', label: '插件' },
+  stdout:    { icon: <CodeOutlined />,    color: '#0f5e4d', label: '终端' },
 };
 
 // ============ 状态指示器 ============
 
 const StatusDot: React.FC<{ enable: boolean; running?: boolean; error?: string }> = ({ enable, running, error }) => {
-  let color = '#bbb';
-  if (!enable) color = '#bbb';
-  else if (error) color = '#ff4d4f';
-  else if (running) color = '#52c41a';
-  else color = '#faad14';
+  let color = 'var(--ink-3)';
+  if (!enable) color = 'var(--ink-3)';
+  else if (error) color = 'var(--rouge)';
+  else if (running) color = 'var(--success)';
+  else color = 'var(--ochre)';
   return (
     <Tooltip title={error || (enable ? (running ? '运行中' : '已启用未运行') : '已禁用')}>
       <span style={{
@@ -118,14 +120,14 @@ const NodeCard: React.FC<{
     <div
       style={{
         position: 'relative',
-        background: '#fff',
-        border: `2px solid ${accent}`,
-        borderRadius: 10,
+        background: 'var(--paper-0)',
+        border: `1px solid var(--line-strong)`,
+        borderRadius: 'var(--r-lg)',
         width: 240,
         boxSizing: 'border-box',
         boxShadow: data.running
-          ? `0 4px 12px ${accent}33`
-          : '0 2px 6px rgba(0,0,0,0.08)',
+          ? 'var(--shadow-2)'
+          : 'var(--shadow-1)',
         transition: 'box-shadow 0.3s, transform 0.15s',
         overflow: 'hidden',
       }}
@@ -134,8 +136,8 @@ const NodeCard: React.FC<{
     >
       {/* 头部 */}
       <div style={{
-        background: accent,
-        color: '#fff',
+        background: `${accent}1a`,
+        color: accent,
         padding: '6px 10px',
         display: 'flex',
         alignItems: 'center',
@@ -154,13 +156,13 @@ const NodeCard: React.FC<{
       {/* 主体 */}
       <div style={{ padding: '8px 10px' }}>
         <div
-          style={{ fontSize: 13, fontWeight: 600, color: '#222', marginBottom: 4, cursor: 'pointer' }}
+          style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink-0)', marginBottom: 4, cursor: 'pointer' }}
           onClick={() => data.onEdit?.(data.id)}
         >
           {data.name}
         </div>
         {data.summary && (
-          <div style={{ fontSize: 11, color: '#888', marginBottom: 6 }}>{data.summary}</div>
+          <div style={{ fontSize: 11, color: 'var(--ink-2)', marginBottom: 6 }}>{data.summary}</div>
         )}
         {children}
         {/* topic 标签 */}
@@ -186,17 +188,17 @@ const NodeCard: React.FC<{
       {/* 底部操作 */}
       <div style={{
         padding: '4px 10px',
-        borderTop: '1px solid #f0f0f0',
+        borderTop: '1px solid var(--line)',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ fontSize: 10, color: '#aaa' }}>#{data.id}</span>
+          <span style={{ fontSize: 10, color: 'var(--ink-3)' }}>#{data.id}</span>
           {data.onDelete && (
             <Tooltip title="删除">
               <DeleteOutlined
-                style={{ color: '#999', fontSize: 12, padding: 2, cursor: 'pointer' }}
+                style={{ color: 'var(--ink-2)', fontSize: 12, padding: 2, cursor: 'pointer' }}
                 onClick={(e) => {
                   e.stopPropagation();
                   Modal.confirm({
@@ -238,16 +240,16 @@ export const ListenerNode = memo(({ data, selected }: NodeProps) => {
       <div
         style={{
           position: 'relative',
-          background: '#fff',
-          border: `2px solid ${selected ? '#1677ff' : meta.color}`,
-          borderRadius: 10,
+          background: 'var(--paper-0)',
+          border: `1px solid ${selected ? 'var(--pine)' : 'var(--line-strong)'}`,
+          borderRadius: 'var(--r-lg)',
           width: 260,
           boxSizing: 'border-box',
           boxShadow: d.running
             ? `0 4px 12px ${meta.color}33`
             : selected
               ? '0 4px 12px rgba(22,119,255,0.18)'
-              : '0 2px 6px rgba(0,0,0,0.08)',
+              : 'var(--shadow-1)',
           transition: 'box-shadow 0.3s, transform 0.15s',
           overflow: 'hidden',
         }}
@@ -256,8 +258,8 @@ export const ListenerNode = memo(({ data, selected }: NodeProps) => {
       >
         {/* 头部 */}
         <div style={{
-          background: meta.color,
-          color: '#fff',
+          background: `${meta.color}1a`,
+          color: meta.color,
           padding: '6px 10px',
           display: 'flex',
           alignItems: 'center',
@@ -276,13 +278,13 @@ export const ListenerNode = memo(({ data, selected }: NodeProps) => {
         {/* 主体 */}
         <div style={{ padding: '8px 10px' }}>
           <div
-            style={{ fontSize: 13, fontWeight: 600, color: '#222', marginBottom: 4, cursor: 'pointer' }}
+            style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink-0)', marginBottom: 4, cursor: 'pointer' }}
             onClick={() => d.onEdit?.(d.id)}
           >
             {d.name}
           </div>
           {d.summary && (
-            <div style={{ fontSize: 11, color: '#888', marginBottom: 6 }}>{d.summary}</div>
+            <div style={{ fontSize: 11, color: 'var(--ink-2)', marginBottom: 6 }}>{d.summary}</div>
           )}
           {/* topic 标签 */}
           {d.topic && (
@@ -300,14 +302,14 @@ export const ListenerNode = memo(({ data, selected }: NodeProps) => {
         {/* 底部操作 */}
         <div style={{
           padding: '4px 10px',
-          borderTop: '1px solid #f0f0f0',
+          borderTop: '1px solid var(--line)',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
         }}>
           <Tooltip title="删除">
             <DeleteOutlined
-              style={{ color: '#999', fontSize: 12, padding: 2 }}
+              style={{ color: 'var(--ink-2)', fontSize: 12, padding: 2 }}
               onClick={(e) => { e.stopPropagation(); d.onDelete?.(d.id); }}
               onMouseEnter={(e) => { e.currentTarget.style.color = '#ff4d4f'; }}
               onMouseLeave={(e) => { e.currentTarget.style.color = '#999'; }}
@@ -360,20 +362,20 @@ export const ViewerNode = memo(({ data, selected }: NodeProps) => {
   const meta = { icon: <EyeOutlined />, color: accent, label: '订阅查看器' };
   return (
     <>
-      <Handle type="target" position={Position.Left} style={{ background: accent, width: 10, height: 10 }} />
+      <Handle type="target" position={Position.Left} style={{ background: `${accent}1a`, width: 10, height: 10 }} />
       <div
         style={{
           position: 'relative',
-          background: '#fff',
-          border: `2px solid ${selected ? '#1677ff' : accent}`,
-          borderRadius: 10,
+          background: 'var(--paper-0)',
+          border: `1px solid ${selected ? 'var(--pine)' : 'var(--line-strong)'}`,
+          borderRadius: 'var(--r-lg)',
           width: 240,
           boxSizing: 'border-box',
           boxShadow: d.enable
-            ? `0 4px 12px ${accent}33`
+            ? 'var(--shadow-2)'
             : selected
               ? '0 4px 12px rgba(22,119,255,0.18)'
-              : '0 2px 6px rgba(0,0,0,0.08)',
+              : 'var(--shadow-1)',
           transition: 'box-shadow 0.3s, transform 0.15s',
           overflow: 'hidden',
         }}
@@ -382,8 +384,8 @@ export const ViewerNode = memo(({ data, selected }: NodeProps) => {
       >
         {/* 头部 */}
         <div style={{
-          background: accent,
-          color: '#fff',
+          background: `${accent}1a`,
+          color: accent,
           padding: '6px 10px',
           display: 'flex',
           alignItems: 'center',
@@ -402,13 +404,13 @@ export const ViewerNode = memo(({ data, selected }: NodeProps) => {
         {/* 主体 */}
         <div style={{ padding: '8px 10px' }}>
           <div
-            style={{ fontSize: 13, fontWeight: 600, color: '#222', marginBottom: 4, cursor: 'pointer' }}
+            style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink-0)', marginBottom: 4, cursor: 'pointer' }}
             onClick={() => d.onView?.(d.id)}
           >
             {d.name}
           </div>
           {d.summary && (
-            <div style={{ fontSize: 11, color: '#888', marginBottom: 6 }}>{d.summary}</div>
+            <div style={{ fontSize: 11, color: 'var(--ink-2)', marginBottom: 6 }}>{d.summary}</div>
           )}
           {/* 订阅 topics */}
           {d.topics && d.topics.length > 0 && (
@@ -423,7 +425,7 @@ export const ViewerNode = memo(({ data, selected }: NodeProps) => {
         {/* 底部操作 */}
         <div style={{
           padding: '4px 10px',
-          borderTop: '1px solid #f0f0f0',
+          borderTop: '1px solid var(--line)',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
@@ -437,7 +439,7 @@ export const ViewerNode = memo(({ data, selected }: NodeProps) => {
             </Tooltip>
             <Tooltip title="删除">
               <DeleteOutlined
-                style={{ color: '#999', fontSize: 12, padding: 2, cursor: 'pointer' }}
+                style={{ color: 'var(--ink-2)', fontSize: 12, padding: 2, cursor: 'pointer' }}
                 onClick={(e) => {
                   e.stopPropagation();
                   Modal.confirm({
@@ -455,7 +457,7 @@ export const ViewerNode = memo(({ data, selected }: NodeProps) => {
             </Tooltip>
             <Tooltip title="编辑">
               <EditOutlined
-                style={{ color: '#999', fontSize: 12, padding: 2, cursor: 'pointer' }}
+                style={{ color: 'var(--ink-2)', fontSize: 12, padding: 2, cursor: 'pointer' }}
                 onClick={(e) => { e.stopPropagation(); d.onEdit?.(d.id); }}
                 onMouseEnter={(e) => { e.currentTarget.style.color = '#1677ff'; }}
                 onMouseLeave={(e) => { e.currentTarget.style.color = '#999'; }}
@@ -482,20 +484,20 @@ export const MockerNode = memo(({ data, selected }: NodeProps) => {
   const meta = { icon: <ExperimentOutlined />, color: accent, label: 'Mocker' };
   return (
     <>
-      <Handle type="source" position={Position.Right} style={{ background: accent, width: 10, height: 10 }} />
+      <Handle type="source" position={Position.Right} style={{ background: `${accent}1a`, width: 10, height: 10 }} />
       <div
         style={{
           position: 'relative',
-          background: '#fff',
-          border: `2px solid ${selected ? '#1677ff' : accent}`,
-          borderRadius: 10,
+          background: 'var(--paper-0)',
+          border: `1px solid ${selected ? 'var(--pine)' : 'var(--line-strong)'}`,
+          borderRadius: 'var(--r-lg)',
           width: 240,
           boxSizing: 'border-box',
           boxShadow: d.enable
-            ? `0 4px 12px ${accent}33`
+            ? 'var(--shadow-2)'
             : selected
               ? '0 4px 12px rgba(22,119,255,0.18)'
-              : '0 2px 6px rgba(0,0,0,0.08)',
+              : 'var(--shadow-1)',
           transition: 'box-shadow 0.3s, transform 0.15s',
           overflow: 'hidden',
         }}
@@ -504,8 +506,8 @@ export const MockerNode = memo(({ data, selected }: NodeProps) => {
       >
         {/* 头部 */}
         <div style={{
-          background: accent,
-          color: '#fff',
+          background: `${accent}1a`,
+          color: accent,
           padding: '6px 10px',
           display: 'flex',
           alignItems: 'center',
@@ -524,13 +526,13 @@ export const MockerNode = memo(({ data, selected }: NodeProps) => {
         {/* 主体 */}
         <div style={{ padding: '8px 10px' }}>
           <div
-            style={{ fontSize: 13, fontWeight: 600, color: '#222', marginBottom: 4, cursor: 'pointer' }}
+            style={{ fontSize: 13, fontWeight: 600, color: 'var(--ink-0)', marginBottom: 4, cursor: 'pointer' }}
             onClick={() => d.onEdit?.(d.id)}
           >
             {d.name}
           </div>
           {d.summary && (
-            <div style={{ fontSize: 11, color: '#888', marginBottom: 6 }}>{d.summary}</div>
+            <div style={{ fontSize: 11, color: 'var(--ink-2)', marginBottom: 6 }}>{d.summary}</div>
           )}
           {d.outTopic && (
             <div style={{ marginTop: 4 }}>
@@ -542,7 +544,7 @@ export const MockerNode = memo(({ data, selected }: NodeProps) => {
         {/* 底部操作 */}
         <div style={{
           padding: '4px 10px',
-          borderTop: '1px solid #f0f0f0',
+          borderTop: '1px solid var(--line)',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
@@ -556,7 +558,7 @@ export const MockerNode = memo(({ data, selected }: NodeProps) => {
             </Tooltip>
             <Tooltip title="删除">
               <DeleteOutlined
-                style={{ color: '#999', fontSize: 12, padding: 2 }}
+                style={{ color: 'var(--ink-2)', fontSize: 12, padding: 2 }}
                 onClick={(e) => { e.stopPropagation(); d.onDelete?.(d.id); }}
                 onMouseEnter={(e) => { e.currentTarget.style.color = '#ff4d4f'; }}
                 onMouseLeave={(e) => { e.currentTarget.style.color = '#999'; }}
@@ -583,18 +585,18 @@ export const ListenerParentNode = memo(({ data, selected }: NodeProps) => {
   return (
     <div style={{
       width: '100%', height: '100%',
-      border: `1px solid ${selected ? '#1677ff' : '#91caff'}`,
-      borderRadius: 12,
-      background: 'linear-gradient(180deg, #f0f7ff 0%, #fafcff 100%)',
-      boxShadow: selected ? '0 8px 24px rgba(22,119,255,0.18)' : '0 6px 18px rgba(22,119,255,0.08)',
+      border: `1px solid ${selected ? 'var(--pine)' : 'var(--line-strong)'}`,
+      borderRadius: 'var(--r-xl)',
+      background: 'var(--paper-0)',
+      boxShadow: selected ? 'var(--shadow-2)' : 'var(--shadow-1)',
       boxSizing: 'border-box', overflow: 'hidden', position: 'relative',
       display: 'flex', flexDirection: 'column',
     }}>
       {/* 头部标题+操作 */}
       <div style={{
         padding: '10px 14px',
-        background: 'linear-gradient(135deg, #1677ff 0%, #4096ff 100%)',
-        color: '#fff', flexShrink: 0,
+        background: 'linear-gradient(135deg, var(--pine) 0%, var(--pine-2) 100%)',
+        color: 'var(--paper-0)', flexShrink: 0,
       }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
           <div style={{ minWidth: 0, flex: 1, display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -664,7 +666,7 @@ export const ListenerParentNode = memo(({ data, selected }: NodeProps) => {
                 <span style={{ color: meta.color, display: 'inline-flex', flexShrink: 0, fontSize: 12 }}>{meta.icon}</span>
                 <div style={{ minWidth: 0, flex: 1, display: 'flex', alignItems: 'center', gap: 4, overflow: 'hidden' }}>
                   <Tooltip title={child.errorInfo || (child.enable ? (child.running ? '运行中' : '已启用未运行') : '已禁用')}>
-                    <span style={{ fontSize: 12, fontWeight: 600, color: '#222', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--ink-0)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                       {child.name}
                     </span>
                   </Tooltip>
@@ -699,7 +701,7 @@ export const ListenerParentNode = memo(({ data, selected }: NodeProps) => {
       <div style={{
         padding: '6px 14px',
         borderTop: '1px solid rgba(0,0,0,0.06)',
-        background: '#fff',
+        background: 'var(--paper-0)',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
@@ -710,7 +712,7 @@ export const ListenerParentNode = memo(({ data, selected }: NodeProps) => {
           {d.onDelete && (
             <Tooltip title="删除">
               <DeleteOutlined
-                style={{ color: '#999', fontSize: 12, padding: 2, cursor: 'pointer' }}
+                style={{ color: 'var(--ink-2)', fontSize: 12, padding: 2, cursor: 'pointer' }}
                 onClick={(e) => {
                   e.stopPropagation();
                   Modal.confirm({
@@ -773,7 +775,7 @@ export const SectionTitle: React.FC<{ title: string; color?: 'blue' | 'purple' }
       <span style={{
         width: 3,
         height: 14,
-        background: accent,
+        background: `${accent}1a`,
         borderRadius: 2,
         flexShrink: 0,
       }} />

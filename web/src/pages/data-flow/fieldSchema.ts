@@ -3,7 +3,7 @@
 
 export type FieldType =
   | 'string' | 'number' | 'select' | 'switch' | 'password'
-  | 'textarea' | 'script' | 'pluginParams';
+  | 'textarea' | 'script' | 'pluginParams' | 'framing';
 
 export interface FieldSpec {
   key: string;
@@ -18,6 +18,7 @@ export interface FieldSpec {
   scriptLang?: 'go';
   pluginType?: string;
   fromConfig?: boolean;
+  multi?: boolean;
 }
 
 export type NodeKind =
@@ -85,7 +86,7 @@ const listenerConnSchemas: NodeFieldSchema[] = [
       topicField('topic', '入站 Topic', '连接收到的数据推送到此 topic'),
       topicField('out_topic', '出站 Topic', '订阅此 topic 的消息推送到连接'),
       { key: 'path', label: '路径', type: 'string', placeholder: '/api/data', fromConfig: true },
-      { key: 'methods', label: '方法', type: 'select', options: ['', 'GET', 'POST', 'PUT', 'DELETE', 'PATCH'], fromConfig: true },
+      { key: 'methods', label: '方法', type: 'select', options: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'], fromConfig: true, multi: true, tooltip: '可多选；不选表示全部方法（ALL）' },
     ],
   },
   {
@@ -118,6 +119,7 @@ const listenerConnSchemas: NodeFieldSchema[] = [
       topicField('topic', '入站 Topic'),
       topicField('out_topic', '出站 Topic'),
       { key: 'address', label: '监听地址', type: 'string', placeholder: '0.0.0.0:8080', fromConfig: true },
+      { key: 'framing', label: '分包配置', type: 'framing', tooltip: '处理 TCP 流式数据粘包；留空表示不分包' },
     ],
   },
   {
@@ -128,6 +130,7 @@ const listenerConnSchemas: NodeFieldSchema[] = [
       topicField('topic', '入站 Topic'),
       topicField('out_topic', '出站 Topic'),
       { key: 'address', label: '监听地址', type: 'string', placeholder: '0.0.0.0:8080', fromConfig: true },
+      { key: 'framing', label: '分包配置', type: 'framing', tooltip: '处理 UDP 流式数据粘包；留空表示不分包' },
     ],
   },
   {
@@ -139,6 +142,7 @@ const listenerConnSchemas: NodeFieldSchema[] = [
       topicField('out_topic', '出站 Topic'),
       { key: 'port', label: '串口', type: 'string', placeholder: 'COM3 / /dev/ttyUSB0', fromConfig: true },
       { key: 'baud_rate', label: '波特率', type: 'number', default: 9600, fromConfig: true },
+      { key: 'framing', label: '分包配置', type: 'framing', tooltip: '处理串口流式数据粘包；留空表示不分包' },
     ],
   },
   {
@@ -172,8 +176,25 @@ export const flattenToForm = (kind: NodeKind, type: string, node: any): Record<s
   const cfg = parseJSON(node?.config);
   const vals: Record<string, any> = {};
   for (const f of schema.fields) {
-    if (f.fromConfig) vals[f.key] = cfg[f.key] ?? node?.[f.key] ?? f.default;
-    else vals[f.key] = node?.[f.key] ?? f.default;
+    if (f.type === 'framing') continue;
+    const raw = f.fromConfig ? (cfg[f.key] ?? node?.[f.key] ?? f.default) : (node?.[f.key] ?? f.default);
+    if (f.multi) {
+      vals[f.key] = typeof raw === 'string' && raw ? raw.split(',').map((s: string) => s.trim()).filter(Boolean) : (Array.isArray(raw) ? raw : []);
+    } else {
+      vals[f.key] = raw;
+    }
+  }
+  // framing 字段：从 extra.framing 展平到 framing_* 表单字段
+  if (schema.fields.some(f => f.type === 'framing')) {
+    const extra = parseJSON(node?.extra);
+    const fr = extra.framing || {};
+    vals.framing_mode = fr.mode || undefined;
+    vals.framing_delimiter = fr.delimiter || '';
+    vals.framing_length = fr.length;
+    vals.framing_offset = fr.offset;
+    vals.framing_size = fr.size;
+    vals.framing_endian = fr.endian || 'big';
+    vals.framing_include_header = !!fr.include_header;
   }
   return vals;
 };
@@ -182,9 +203,15 @@ export const buildFromForm = (kind: NodeKind, type: string, formVals: Record<str
   const schema = getSchema(kind, type);
   const out: Record<string, any> = { ...base };
   const cfg: Record<string, any> = {};
+  const hasFraming = !!schema && schema.fields.some(f => f.type === 'framing');
   if (schema) {
     for (const f of schema.fields) {
+      if (f.type === 'framing') continue;
       const v = formVals[f.key];
+      if (f.multi) {
+        if (Array.isArray(v) && v.length) cfg[f.key] = v.join(',');
+        continue;
+      }
       if (f.fromConfig) {
         if (v !== undefined && v !== '' && v !== null) cfg[f.key] = v;
       } else {
@@ -196,5 +223,25 @@ export const buildFromForm = (kind: NodeKind, type: string, formVals: Record<str
     cfg.params = formVals.params;
   }
   out.config = JSON.stringify(cfg);
+  // framing 字段：组装到 extra.framing（保留 extra 中其它字段）
+  if (hasFraming) {
+    const oldExtra = parseJSON(base?.extra);
+    const newExtra: any = { ...oldExtra };
+    if (formVals.framing_mode) {
+      const framing: any = { mode: formVals.framing_mode };
+      if (formVals.framing_mode === 'delimiter') framing.delimiter = formVals.framing_delimiter || '';
+      if (formVals.framing_mode === 'fixed_length') framing.length = formVals.framing_length;
+      if (formVals.framing_mode === 'length_field') {
+        framing.offset = formVals.framing_offset || 0;
+        framing.size = formVals.framing_size || 2;
+        framing.endian = formVals.framing_endian || 'big';
+        framing.include_header = !!formVals.framing_include_header;
+      }
+      newExtra.framing = framing;
+    } else {
+      delete newExtra.framing;
+    }
+    out.extra = JSON.stringify(newExtra);
+  }
   return out;
 };
