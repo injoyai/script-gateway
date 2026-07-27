@@ -549,15 +549,14 @@ interface CreateOption {
 }
 
 const CREATE_OPTIONS: CreateOption[] = [
-  // 监听器父容器
-  { key: 'parent-http', label: 'HTTP 服务', kind: 'listenerParent', type: 'http_server', group: '监听器父容器' },
-  { key: 'parent-mqtt', label: 'MQTT 客户端', kind: 'listenerParent', type: 'mqtt_client', group: '监听器父容器' },
-  // 独立监听器（子项连接，parent_id=0）
-  { key: 'conn-tcp', label: 'TCP 监听', kind: 'listenerConn', type: 'tcp_conn', group: '独立监听器' },
-  { key: 'conn-udp', label: 'UDP 监听', kind: 'listenerConn', type: 'udp_conn', group: '独立监听器' },
-  { key: 'conn-serial', label: '串口监听', kind: 'listenerConn', type: 'serial_conn', group: '独立监听器' },
-  { key: 'conn-script', label: '脚本监听', kind: 'listenerConn', type: 'script_conn', group: '独立监听器' },
-  { key: 'conn-plugin', label: '插件监听', kind: 'listenerConn', type: 'plugin', group: '独立监听器' },
+  // 监听器
+  { key: 'parent-http', label: 'HTTP 服务', kind: 'listenerParent', type: 'http_server', group: '监听器' },
+  { key: 'parent-mqtt', label: 'MQTT 客户端', kind: 'listenerParent', type: 'mqtt_client', group: '监听器' },
+  { key: 'conn-tcp', label: 'TCP 监听', kind: 'listenerConn', type: 'tcp_conn', group: '监听器' },
+  { key: 'conn-udp', label: 'UDP 监听', kind: 'listenerConn', type: 'udp_conn', group: '监听器' },
+  { key: 'conn-serial', label: '串口监听', kind: 'listenerConn', type: 'serial_conn', group: '监听器' },
+  { key: 'conn-script', label: '脚本监听', kind: 'listenerConn', type: 'script_conn', group: '监听器' },
+  { key: 'conn-plugin', label: '插件监听', kind: 'listenerConn', type: 'plugin', group: '监听器' },
   // 处理器链
   { key: 'chain', label: '处理器链', kind: 'chain', type: 'chain', group: '处理器链' },
   { key: 'chain-script', label: '脚本处理器链', kind: 'chain', type: 'script_chain', group: '处理器链' },
@@ -570,8 +569,8 @@ const CREATE_OPTIONS: CreateOption[] = [
   { key: 'disp-rocketmq', label: 'RocketMQ 分发器', kind: 'dispatcher', type: 'rocketmq', group: '分发器' },
   { key: 'disp-plugin', label: '插件分发器', kind: 'dispatcher', type: 'plugin', group: '分发器' },
   { key: 'disp-stdout', label: '终端分发器', kind: 'dispatcher', type: 'stdout', group: '分发器' },
-  // 订阅查看器
-  { key: 'viewer', label: '订阅查看器', kind: 'viewer', type: 'viewer', group: '订阅查看器' },
+  // 查看分发器（订阅 topic 推送到前端实时查看，归入分发器）
+  { key: 'viewer', label: '查看分发器', kind: 'viewer', type: 'viewer', group: '分发器' },
   // 虚拟数据
   { key: 'mocker', label: '虚拟数据发送器', kind: 'mocker', type: 'mocker', group: '虚拟数据' },
 ];

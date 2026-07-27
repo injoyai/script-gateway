@@ -479,7 +479,7 @@ export const InlineEditPanel: React.FC<Props> = ({ target, onClose, onSaved, onA
     listener: '编辑监听器',
     chain: '编辑处理器链',
     dispatcher: '编辑分发器',
-    viewer: '编辑订阅查看器',
+    viewer: '编辑查看分发器',
     mocker: '编辑虚拟数据发送器',
   };
 

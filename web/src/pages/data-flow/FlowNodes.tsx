@@ -354,12 +354,12 @@ export const DispatcherNode = memo(({ data }: NodeProps) => {
   );
 });
 
-// ============ 订阅查看器节点 ============
+// ============ 查看分发器节点 ============
 
 export const ViewerNode = memo(({ data, selected }: NodeProps) => {
   const d = data as unknown as FlowNodeData;
   const accent = '#1677ff';
-  const meta = { icon: <EyeOutlined />, color: accent, label: '订阅查看器' };
+  const meta = { icon: <EyeOutlined />, color: accent, label: '查看分发器' };
   return (
     <>
       <Handle type="target" position={Position.Left} style={{ background: `${accent}1a`, width: 10, height: 10 }} />
