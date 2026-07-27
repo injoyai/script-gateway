@@ -86,7 +86,7 @@ const listenerConnSchemas: NodeFieldSchema[] = [
       topicField('topic', '入站 Topic', '连接收到的数据推送到此 topic'),
       topicField('out_topic', '出站 Topic', '订阅此 topic 的消息推送到连接'),
       { key: 'path', label: '路径', type: 'string', placeholder: '/api/data', fromConfig: true },
-      { key: 'methods', label: '方法', type: 'select', options: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'], fromConfig: true, multi: true, tooltip: '可多选；不选表示全部方法（ALL）' },
+      { key: 'methods', label: '方法', type: 'select', options: ['ALL', 'GET', 'POST', 'PUT', 'DELETE', 'PATCH'], fromConfig: true, multi: true, tooltip: 'ALL 表示全部方法' },
     ],
   },
   {
@@ -179,7 +179,13 @@ export const flattenToForm = (kind: NodeKind, type: string, node: any): Record<s
     if (f.type === 'framing') continue;
     const raw = f.fromConfig ? (cfg[f.key] ?? node?.[f.key] ?? f.default) : (node?.[f.key] ?? f.default);
     if (f.multi) {
-      vals[f.key] = typeof raw === 'string' && raw ? raw.split(',').map((s: string) => s.trim()).filter(Boolean) : (Array.isArray(raw) ? raw : []);
+      if (typeof raw === 'string' && raw) {
+        vals[f.key] = raw.split(',').map((s: string) => s.trim()).filter(Boolean);
+      } else if (Array.isArray(raw)) {
+        vals[f.key] = raw;
+      } else {
+        vals[f.key] = f.key === 'methods' ? ['ALL'] : [];
+      }
     } else {
       vals[f.key] = raw;
     }
@@ -209,7 +215,7 @@ export const buildFromForm = (kind: NodeKind, type: string, formVals: Record<str
       if (f.type === 'framing') continue;
       const v = formVals[f.key];
       if (f.multi) {
-        if (Array.isArray(v) && v.length) cfg[f.key] = v.join(',');
+        if (Array.isArray(v) && v.length && !v.includes('ALL')) cfg[f.key] = v.join(',');
         continue;
       }
       if (f.fromConfig) {

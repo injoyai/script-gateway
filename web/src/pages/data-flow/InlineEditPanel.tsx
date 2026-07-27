@@ -218,7 +218,7 @@ export const InlineEditPanel: React.FC<Props> = ({ target, onClose, onSaved, onA
         port: d.port || cfg.port,
         baud_rate: d.baud_rate || cfg.baud_rate,
         path: d.path || cfg.path,
-        methods: ((d.methods || cfg.methods || '') + '').split(',').map((s: string) => s.trim()).filter(Boolean),
+        methods: (() => { const m = ((d.methods || cfg.methods || '') + '').trim(); return m ? m.split(',').map((s: string) => s.trim()).filter(Boolean) : ['ALL']; })(),
         sub_topic: d.sub_topic || cfg.sub_topic,
         qos: d.qos ?? cfg.qos,
         content: d.content || cfg.content,
@@ -327,7 +327,7 @@ export const InlineEditPanel: React.FC<Props> = ({ target, onClose, onSaved, onA
         if (values.port) cfg.port = values.port;
         if (values.baud_rate) cfg.baud_rate = values.baud_rate;
         if (values.path) cfg.path = values.path;
-        if (values.methods && values.methods.length) cfg.methods = values.methods.join(',');
+        if (values.methods && values.methods.length && !values.methods.includes('ALL')) cfg.methods = values.methods.join(',');
         if (values.sub_topic) cfg.sub_topic = values.sub_topic;
         if (values.qos !== undefined) cfg.qos = values.qos;
         if (d.type === 'script_conn') {
@@ -735,8 +735,8 @@ export const InlineEditPanel: React.FC<Props> = ({ target, onClose, onSaved, onA
         {target.kind === 'listener' && target.data.type === 'http_route' && (
           <>
             <Form.Item name="path" label="路径"><Input placeholder="/api/data" /></Form.Item>
-            <Form.Item name="methods" label="方法" tooltip="可多选；不选表示全部方法（ALL）">
-              <Select mode="multiple" allowClear placeholder="不选表示全部" options={[{ value: 'GET', label: 'GET' }, { value: 'POST', label: 'POST' }, { value: 'PUT', label: 'PUT' }, { value: 'DELETE', label: 'DELETE' }, { value: 'PATCH', label: 'PATCH' }]} />
+            <Form.Item name="methods" label="方法" tooltip="ALL 表示全部方法">
+              <Select mode="multiple" allowClear placeholder="请选择" options={[{ value: 'ALL', label: 'ALL' }, { value: 'GET', label: 'GET' }, { value: 'POST', label: 'POST' }, { value: 'PUT', label: 'PUT' }, { value: 'DELETE', label: 'DELETE' }, { value: 'PATCH', label: 'PATCH' }]} />
             </Form.Item>
           </>
         )}
