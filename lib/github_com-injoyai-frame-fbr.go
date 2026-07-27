@@ -38,15 +38,22 @@ func init() {
 		"WSPing":           reflect.ValueOf(constant.MakeFromLiteral("9", token.INT, 0)),
 		"WSPong":           reflect.ValueOf(constant.MakeFromLiteral("10", token.INT, 0)),
 		"WSText":           reflect.ValueOf(constant.MakeFromLiteral("1", token.INT, 0)),
+		"WithALL":          reflect.ValueOf(fbr.WithALL),
 		"WithCORS":         reflect.ValueOf(fbr.WithCORS),
 		"WithCache":        reflect.ValueOf(fbr.WithCache),
 		"WithContext":      reflect.ValueOf(fbr.WithContext),
+		"WithDELETE":       reflect.ValueOf(fbr.WithDELETE),
 		"WithEmbed":        reflect.ValueOf(fbr.WithEmbed),
 		"WithFS":           reflect.ValueOf(fbr.WithFS),
+		"WithGET":          reflect.ValueOf(fbr.WithGET),
+		"WithGroup":        reflect.ValueOf(fbr.WithGroup),
 		"WithLimit":        reflect.ValueOf(fbr.WithLimit),
 		"WithListenConfig": reflect.ValueOf(fbr.WithListenConfig),
 		"WithLog":          reflect.ValueOf(fbr.WithLog),
 		"WithLog2":         reflect.ValueOf(fbr.WithLog2),
+		"WithOptions":      reflect.ValueOf(fbr.WithOptions),
+		"WithPOST":         reflect.ValueOf(fbr.WithPOST),
+		"WithPUT":          reflect.ValueOf(fbr.WithPUT),
 		"WithPing":         reflect.ValueOf(fbr.WithPing),
 		"WithPort":         reflect.ValueOf(fbr.WithPort),
 		"WithPprof":        reflect.ValueOf(fbr.WithPprof),
@@ -779,7 +786,7 @@ type _github_com_injoyai_frame_fbr_Grouper struct {
 	WCONNECT       func(path string, handler func(c fbr.Ctx))
 	WDELETE        func(path string, handler func(c fbr.Ctx))
 	WEmbed         func(path string, e embed.FS)
-	WFS            func(path string, prefix string, fs fs.FS)
+	WFS            func(path string, fs fs.FS)
 	WGET           func(path string, handler func(c fbr.Ctx))
 	WGroup         func(path string, handler func(g fbr.Grouper))
 	WHEAD          func(path string, handler func(c fbr.Ctx))
@@ -806,8 +813,8 @@ func (W _github_com_injoyai_frame_fbr_Grouper) DELETE(path string, handler func(
 func (W _github_com_injoyai_frame_fbr_Grouper) Embed(path string, e embed.FS) {
 	W.WEmbed(path, e)
 }
-func (W _github_com_injoyai_frame_fbr_Grouper) FS(path string, prefix string, fs fs.FS) {
-	W.WFS(path, prefix, fs)
+func (W _github_com_injoyai_frame_fbr_Grouper) FS(path string, fs fs.FS) {
+	W.WFS(path, fs)
 }
 func (W _github_com_injoyai_frame_fbr_Grouper) GET(path string, handler func(c fbr.Ctx)) {
 	W.WGET(path, handler)

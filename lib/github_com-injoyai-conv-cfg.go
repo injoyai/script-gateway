@@ -10,6 +10,7 @@ import (
 func init() {
 	Symbols["github.com/injoyai/conv/cfg/cfg"] = map[string]reflect.Value{
 		// function, constant and variable definitions
+		"Append":          reflect.ValueOf(cfg.Append),
 		"Default":         reflect.ValueOf(&cfg.Default).Elem(),
 		"GetBool":         reflect.ValueOf(cfg.GetBool),
 		"GetDMap":         reflect.ValueOf(cfg.GetDMap),
