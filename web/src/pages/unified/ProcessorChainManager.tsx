@@ -14,15 +14,15 @@ import {
 
 const API_BASE = '/api';
 
-// 容器类型：脚本链 / 内置处理器链 / 插件处理器链
+// 容器类型：脚本链 / 内置处理器 / 插件处理器
 // 与数据流可视化页面保持一致
 const CHAIN_KIND_SCRIPT = 'script_chain';
 const CHAIN_KIND_BUILTIN = 'chain';
 const CHAIN_KIND_PLUGIN = 'plugin_chain';
 const CHAIN_KIND_OPTIONS = [
-  { value: CHAIN_KIND_SCRIPT, label: '脚本处理器链' },
-  { value: CHAIN_KIND_BUILTIN, label: '内置处理器链' },
-  { value: CHAIN_KIND_PLUGIN, label: '插件处理器链' },
+  { value: CHAIN_KIND_SCRIPT, label: '脚本处理器' },
+  { value: CHAIN_KIND_BUILTIN, label: '内置处理器' },
+  { value: CHAIN_KIND_PLUGIN, label: '插件处理器' },
 ];
 
 // 与 AGENTS.md 第 1 条一致：script 处理器函数名固定 Deal，返回 map[string]any
@@ -117,7 +117,7 @@ const ProcessorChainManager: React.FC = () => {
   const [form] = Form.useForm();
   const openScriptEditor = useScriptEditorStore((s) => s.openEditor);
 
-  // 内置处理器链：选中的处理器类型 + 配置
+  // 内置处理器：选中的处理器类型 + 配置
   const [builtinKey, setBuiltinKey] = useState<string>('');
   const [builtinConfig, setBuiltinConfig] = useState<Record<string, any>>({});
   // 脚本链：脚本草稿
@@ -315,6 +315,7 @@ const ProcessorChainManager: React.FC = () => {
       name: record.name,
       content: current,
       language: 'go',
+      scriptType: 'deal',
       onSave: async (content) => {
         const payload = {
           id: record.id,
@@ -342,9 +343,10 @@ const ProcessorChainManager: React.FC = () => {
   const handleEditScriptInModal = () => {
     const current = scriptDraft || (editItem ? extractScript(editItem.processors) : DEFAULT_PROCESS_SCRIPT);
     openScriptEditor({
-      name: editItem?.name || '新处理器链',
+      name: editItem?.name || '新处理器',
       content: current,
       language: 'go',
+      scriptType: 'deal',
       onSave: (content) => {
         setScriptDraft(content);
         message.success('脚本已更新，点击「确定」保存生效');
@@ -417,7 +419,7 @@ const ProcessorChainManager: React.FC = () => {
   return (
     <div>
       <div style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between' }}>
-        <h3>处理器链</h3>
+        <h3>处理器</h3>
         <Space>
           <Button icon={<ReloadOutlined />} onClick={fetchList}>刷新</Button>
           <Button type="primary" icon={<PlusOutlined />} onClick={handleCreate}>新建</Button>
@@ -426,7 +428,7 @@ const ProcessorChainManager: React.FC = () => {
       <Table columns={columns} dataSource={list} rowKey="id" loading={loading} size="small" />
 
       <Modal
-        title={editItem ? '编辑处理器链' : '新建处理器链'}
+        title={editItem ? '编辑处理器' : '新建处理器'}
         open={modalVisible}
         onOk={handleSubmit}
         onCancel={() => setModalVisible(false)}
@@ -470,7 +472,7 @@ const ProcessorChainManager: React.FC = () => {
           {selectedKind === CHAIN_KIND_SCRIPT && (
             <>
               <div style={{ marginBottom: 8, color: '#8c8c8c', fontSize: 12 }}>
-                脚本处理器链：通过 Deal 函数处理消息，支持多 topic 输出。点击下方按钮编辑脚本。
+                脚本处理器：通过 Deal 函数处理消息，支持多 topic 输出。点击下方按钮编辑脚本。
               </div>
               <Button icon={<CodeOutlined />} onClick={handleEditScriptInModal} block>
                 {scriptDraft ? '编辑脚本（已编辑）' : '编辑脚本'}

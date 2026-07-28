@@ -1,7 +1,7 @@
 package push
 
 import (
-	"github.com/injoyai/ios/client"
+	"github.com/injoyai/ios/v2/client"
 	"github.com/injoyai/script-gateway/internal/types"
 )
 

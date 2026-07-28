@@ -54,6 +54,7 @@ const ScriptForward: React.FC = () => {
         name: fileName,
         content: defaultCode,
         language: 'go',
+        scriptType: 'forward',
         onSave: async (content) => {
           message.success(`转发脚本 ${fileName} 已保存`);
         },

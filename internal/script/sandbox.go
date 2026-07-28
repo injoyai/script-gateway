@@ -3,6 +3,7 @@ package script
 import (
 	"context"
 	"fmt"
+	"io"
 	"time"
 
 	"github.com/injoyai/script-gateway/lib"
@@ -39,9 +40,29 @@ func SafeInterpreter() *interp.Interpreter {
 	return i
 }
 
+// SafeInterpreterWithStdout 创建带自定义 stdout/stderr 的安全沙盒解释器
+// 用于测试场景，捕获脚本中 fmt.Println 等终端输出
+func SafeInterpreterWithStdout(stdout, stderr io.Writer) *interp.Interpreter {
+	i := interp.New(interp.Options{
+		Stdout: stdout,
+		Stderr: stderr,
+	})
+	i.Use(stdlib.Symbols)
+	i.Use(lib.Symbols)
+	return i
+}
+
 // SafeInterpreterWithWhitelist 创建带白名单的安全沙盒解释器
 func SafeInterpreterWithWhitelist() *interp.Interpreter {
-	i := interp.New(interp.Options{})
+	return SafeInterpreterWithWhitelistAndStdout(nil, nil)
+}
+
+// SafeInterpreterWithWhitelistAndStdout 创建带白名单和自定义 stdout/stderr 的安全沙盒解释器
+func SafeInterpreterWithWhitelistAndStdout(stdout, stderr io.Writer) *interp.Interpreter {
+	i := interp.New(interp.Options{
+		Stdout: stdout,
+		Stderr: stderr,
+	})
 	// 仅注册白名单包
 	filtered := make(interp.Exports)
 	for pkg, symbols := range stdlib.Symbols {

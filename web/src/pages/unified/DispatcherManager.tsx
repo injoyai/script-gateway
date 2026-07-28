@@ -245,6 +245,7 @@ const DispatcherManager: React.FC = () => {
                 name: record.name,
                 content: config.content || '',
                 language: 'go',
+                scriptType: 'forward',
                 onSave: async (content) => {
                   const payload = {
                     id: record.id,

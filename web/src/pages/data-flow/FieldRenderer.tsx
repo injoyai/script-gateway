@@ -39,7 +39,7 @@ export const FieldRenderer: React.FC<Props> = ({ spec, form }) => {
             mode={spec.multi ? 'multiple' : undefined}
             allowClear
             placeholder={spec.placeholder || '请选择'}
-            options={(spec.options || []).map(o => ({ value: o, label: o || '(空)' }))}
+            options={(spec.options || []).map(o => ({ value: o, label: o === '' ? '(空)' : String(o) }))}
           />
         </Form.Item>
       );

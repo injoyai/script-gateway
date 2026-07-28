@@ -159,7 +159,7 @@ const ViewerStreamModal: React.FC<Props> = ({ open, viewerId, initialTopics, onC
 
   return (
     <Modal
-      title={`查看分发器 - 实时数据${viewerId ? ` (#${viewerId})` : ''}`}
+      title={`网页分发器 - 实时数据${viewerId ? ` (#${viewerId})` : ''}`}
       open={open}
       onCancel={onClose}
       footer={null}

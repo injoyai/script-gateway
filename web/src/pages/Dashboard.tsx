@@ -192,7 +192,7 @@ const Dashboard: React.FC = () => {
         data: [
           { value: activeListeners || 1, name: '监听器', itemStyle: { color: '#0f5e4d' } },
           { value: activeDispatchers || 1, name: '分发器', itemStyle: { color: '#b85c00' } },
-          { value: 1, name: '处理器链', itemStyle: { color: '#3a4f7a' } },
+          { value: 1, name: '处理器', itemStyle: { color: '#3a4f7a' } },
         ],
       },
     ],
@@ -225,7 +225,7 @@ const Dashboard: React.FC = () => {
 
   const events = [
     { ts: '15:42:18', level: '消息', src: '监听器·HTTP', msg: '已在 :8080 启动' },
-    { ts: '15:42:18', level: '消息', src: '管道', msg: '已加载 0 条处理器链' },
+    { ts: '15:42:18', level: '消息', src: '管道', msg: '已加载 0 条处理器' },
     { ts: '15:42:18', level: '消息', src: '分发器', msg: '已订阅主题 *' },
     { ts: '15:39:02', level: '提示', src: '认证', msg: '环境变量未设 JWT 密钥，使用默认值' },
     { ts: '15:38:55', level: '消息', src: '系统', msg: '数据库已连接 · SQLite' },

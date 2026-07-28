@@ -327,11 +327,17 @@ export const ListenerNode = memo(({ data, selected }: NodeProps) => {
   );
 });
 
-// ============ 处理器链节点 ============
+// ============ 处理器节点 ============
+
+const CHAIN_TYPE_LABEL: Record<string, string> = {
+  chain: '内置处理器',
+  script_chain: '脚本处理器',
+  plugin_chain: '插件处理器',
+};
 
 export const ChainNode = memo(({ data }: NodeProps) => {
   const d = data as unknown as FlowNodeData;
-  const meta = { icon: <ThunderboltOutlined />, color: '#b85c00', label: '处理器链' };
+  const meta = { icon: <ThunderboltOutlined />, color: '#b85c00', label: CHAIN_TYPE_LABEL[d.type] || '处理器' };
   return (
     <>
       <Handle type="target" position={Position.Left} style={{ background: meta.color, width: 10, height: 10 }} />
@@ -354,12 +360,12 @@ export const DispatcherNode = memo(({ data }: NodeProps) => {
   );
 });
 
-// ============ 查看分发器节点 ============
+// ============ 网页分发器节点 ============
 
 export const ViewerNode = memo(({ data, selected }: NodeProps) => {
   const d = data as unknown as FlowNodeData;
   const accent = '#1677ff';
-  const meta = { icon: <EyeOutlined />, color: accent, label: '查看分发器' };
+  const meta = { icon: <EyeOutlined />, color: accent, label: '网页分发器' };
   return (
     <>
       <Handle type="target" position={Position.Left} style={{ background: `${accent}1a`, width: 10, height: 10 }} />

@@ -32,6 +32,7 @@ func Run(port int) error {
 		g.Group("/metrics", fbr.WithStruct(&api.Metrics{}))
 		g.Group("/snapshot", fbr.WithStruct(&api.ConfigSnapshot{}))
 		g.Group("/hotreload", fbr.WithStruct(&api.ScriptHotReload{}))
+		g.Group("/script-test", fbr.WithStruct(&api.ScriptTest{}))
 		g.Group("/plugin", fbr.WithStruct(&api.Plugin{}))
 		g.Group("/ssh", fbr.WithStruct(&api.Ssh{}))
 	})

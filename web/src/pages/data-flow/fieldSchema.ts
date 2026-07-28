@@ -13,7 +13,7 @@ export interface FieldSpec {
   tooltip?: string;
   placeholder?: string;
   default?: any;
-  options?: string[];
+  options?: (string | number)[];
   min?: number; max?: number;
   scriptLang?: 'go';
   pluginType?: string;
@@ -97,7 +97,7 @@ const listenerConnSchemas: NodeFieldSchema[] = [
       topicField('topic', '入站 Topic'),
       topicField('out_topic', '出站 Topic'),
       { key: 'sub_topic', label: '订阅 Topic', type: 'string', fromConfig: true },
-      { key: 'qos', label: 'QoS', type: 'number', min: 0, max: 2, fromConfig: true },
+      { key: 'qos', label: 'QoS', type: 'select', options: [0, 1, 2], fromConfig: true },
     ],
   },
   {
@@ -187,7 +187,8 @@ export const flattenToForm = (kind: NodeKind, type: string, node: any): Record<s
         vals[f.key] = f.key === 'methods' ? ['ALL'] : [];
       }
     } else {
-      vals[f.key] = raw;
+      // select（非 multi）回填时转为字符串，与 options（string[]）匹配
+      vals[f.key] = (f.type === 'select' && raw != null) ? String(raw) : raw;
     }
   }
   // framing 字段：从 extra.framing 展平到 framing_* 表单字段
@@ -219,7 +220,10 @@ export const buildFromForm = (kind: NodeKind, type: string, formVals: Record<str
         continue;
       }
       if (f.fromConfig) {
-        if (v !== undefined && v !== '' && v !== null) cfg[f.key] = v;
+        if (v !== undefined && v !== '' && v !== null) {
+          // select（非 multi）的纯数字字符串转回数字，与后端 byte/int 字段匹配
+          cfg[f.key] = (f.type === 'select' && typeof v === 'string' && /^\d+$/.test(v)) ? Number(v) : v;
+        }
       } else {
         out[f.key] = v;
       }

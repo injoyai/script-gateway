@@ -54,7 +54,7 @@ const parseJSON = (s?: string): any => {
 export const InlineEditPanel: React.FC<Props> = ({ target, onClose, onSaved, onAdvancedEdit }) => {
   const [form] = Form.useForm();
   const [saving, setSaving] = useState(false);
-  // 内置处理器链：当前选中的处理器 key 和 config（编辑时回填，保存时序列化为 processors JSON）
+  // 内置处理器：当前选中的处理器 key 和 config（编辑时回填，保存时序列化为 processors JSON）
   const [builtinKey, setBuiltinKey] = useState<string>('');
   const [builtinConfig, setBuiltinConfig] = useState<Record<string, any>>({});
   // 插件容器：当前插件名和参数
@@ -86,7 +86,7 @@ export const InlineEditPanel: React.FC<Props> = ({ target, onClose, onSaved, onA
     })();
   }, []);
 
-  // 从处理器链的 processors 字段中提取 script 处理器的脚本内容
+  // 从处理器的 processors 字段中提取 script 处理器的脚本内容
   const extractChainScript = (processorsRaw?: string): { script: string; hasScript: boolean } => {
     try {
       const arr = JSON.parse(processorsRaw || '[]');
@@ -100,19 +100,20 @@ export const InlineEditPanel: React.FC<Props> = ({ target, onClose, onSaved, onA
     }
   };
 
-  // 打开脚本编辑器编辑处理器链中的 script 处理器
+  // 打开脚本编辑器编辑处理器中的 script 处理器
   const handleEditChainScript = () => {
     if (target?.kind !== 'chain') return;
     const d = target.data;
     const { script, hasScript } = extractChainScript(d.processors);
     if (!hasScript) {
-      message.warning('该处理器链未包含脚本处理器');
+      message.warning('该处理器未包含脚本处理器');
       return;
     }
     openScriptEditor({
       name: d.name,
       content: script,
       language: 'go',
+      scriptType: 'deal',
       onSave: async (newContent) => {
         // 更新 processors 中的 script 配置
         let arr: any[] = [];
@@ -147,6 +148,7 @@ export const InlineEditPanel: React.FC<Props> = ({ target, onClose, onSaved, onA
       name: d.name,
       content: script,
       language: 'go',
+      scriptType: 'listener',
       onSave: async (newContent) => {
         const newCfg = { ...cfg, content: newContent };
         await updateListenerConn({
@@ -175,6 +177,7 @@ export const InlineEditPanel: React.FC<Props> = ({ target, onClose, onSaved, onA
       name: d.name,
       content: d.config || '',
       language: 'go',
+      scriptType: 'forward',
       onSave: async (newContent) => {
         await updateDispatcher({
           id: d.id,
@@ -477,9 +480,9 @@ export const InlineEditPanel: React.FC<Props> = ({ target, onClose, onSaved, onA
   const titleMap = {
     listenerParent: '编辑父级监听器',
     listener: '编辑监听器',
-    chain: '编辑处理器链',
+    chain: '编辑处理器',
     dispatcher: '编辑分发器',
-    viewer: '编辑查看分发器',
+    viewer: '编辑网页分发器',
     mocker: '编辑虚拟数据发送器',
   };
 
@@ -529,7 +532,7 @@ export const InlineEditPanel: React.FC<Props> = ({ target, onClose, onSaved, onA
 
         {target.kind === 'chain' && (
           <>
-            <Form.Item name="topic" label="订阅 Topic" tooltip="处理器链订阅此 topic 的消息进行处理">
+            <Form.Item name="topic" label="订阅 Topic" tooltip="处理器订阅此 topic 的消息进行处理">
               <Input placeholder="例如：device/data" />
             </Form.Item>
             <Form.Item name="out_topic" label="发布 Topic" tooltip="处理完成后默认发布到此 topic；留空则沿用处理器内部返回或原 topic">
@@ -743,7 +746,7 @@ export const InlineEditPanel: React.FC<Props> = ({ target, onClose, onSaved, onA
         {target.kind === 'listener' && target.data.type === 'mqtt_subscription' && (
           <>
             <Form.Item name="sub_topic" label="订阅 Topic"><Input /></Form.Item>
-            <Form.Item name="qos" label="QoS"><InputNumber min={0} max={2} style={{ width: '100%' }} placeholder="0" /></Form.Item>
+            <Form.Item name="qos" label="QoS"><Select options={[{ value: 0, label: '0' }, { value: 1, label: '1' }, { value: 2, label: '2' }]} placeholder="0" /></Form.Item>
           </>
         )}
 

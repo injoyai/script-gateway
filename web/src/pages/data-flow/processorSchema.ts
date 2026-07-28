@@ -1,5 +1,5 @@
 // 内置处理器配置 schema
-// 一个处理器链容器只选一个内置处理器，多个处理通过数据流串联多个容器实现
+// 一个处理器容器只选一个内置处理器，多个处理通过数据流串联多个容器实现
 // 与后端 internal/decode/decode_interface.go 的 All() 和 internal/pipeline/manager.go 的 createPipeline switch 保持同步
 // 注意：script 类型不在此处，脚本链走另一个入口
 
@@ -94,7 +94,7 @@ export const buildDefaultConfig = (key: string): Record<string, any> => {
 };
 
 // 解析 processors JSON：返回第一个处理器的 key 和 config
-// 处理器链只允许一个处理器，多于一个时也只取第一个
+// 处理器只允许一个处理器，多于一个时也只取第一个
 export const parseSingleProcessor = (processorsRaw?: string): { key: string; config: Record<string, any> } | null => {
   try {
     const arr = JSON.parse(processorsRaw || '[]');

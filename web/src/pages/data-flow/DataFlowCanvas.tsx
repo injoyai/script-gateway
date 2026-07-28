@@ -72,7 +72,7 @@ import {
   serializeSingleProcessor,
 } from './processorSchema';
 
-// 脚本处理器链默认模板（与 AGENTS.md 第 1 条一致，最简骨架）
+// 脚本处理器默认模板（与 AGENTS.md 第 1 条一致，最简骨架）
 const DEFAULT_CHAIN_SCRIPT = `package main
 
 func Deal(payload []byte) (map[string]any, error) {
@@ -557,10 +557,10 @@ const CREATE_OPTIONS: CreateOption[] = [
   { key: 'conn-serial', label: '串口监听', kind: 'listenerConn', type: 'serial_conn', group: '监听器' },
   { key: 'conn-script', label: '脚本监听', kind: 'listenerConn', type: 'script_conn', group: '监听器' },
   { key: 'conn-plugin', label: '插件监听', kind: 'listenerConn', type: 'plugin', group: '监听器' },
-  // 处理器链
-  { key: 'chain', label: '处理器链', kind: 'chain', type: 'chain', group: '处理器链' },
-  { key: 'chain-script', label: '脚本处理器链', kind: 'chain', type: 'script_chain', group: '处理器链' },
-  { key: 'chain-plugin', label: '插件处理器链', kind: 'chain', type: 'plugin_chain', group: '处理器链' },
+  // 处理器
+  { key: 'chain', label: '内置处理器', kind: 'chain', type: 'chain', group: '处理器' },
+  { key: 'chain-script', label: '脚本处理器', kind: 'chain', type: 'script_chain', group: '处理器' },
+  { key: 'chain-plugin', label: '插件处理器', kind: 'chain', type: 'plugin_chain', group: '处理器' },
   // 分发器
   { key: 'disp-http', label: 'HTTP 分发器', kind: 'dispatcher', type: 'http', group: '分发器' },
   { key: 'disp-mqtt', label: 'MQTT 分发器', kind: 'dispatcher', type: 'mqtt', group: '分发器' },
@@ -569,8 +569,8 @@ const CREATE_OPTIONS: CreateOption[] = [
   { key: 'disp-rocketmq', label: 'RocketMQ 分发器', kind: 'dispatcher', type: 'rocketmq', group: '分发器' },
   { key: 'disp-plugin', label: '插件分发器', kind: 'dispatcher', type: 'plugin', group: '分发器' },
   { key: 'disp-stdout', label: '终端分发器', kind: 'dispatcher', type: 'stdout', group: '分发器' },
-  // 查看分发器（订阅 topic 推送到前端实时查看，归入分发器）
-  { key: 'viewer', label: '查看分发器', kind: 'viewer', type: 'viewer', group: '分发器' },
+  // 网页分发器（订阅 topic 推送到前端实时查看，归入分发器）
+  { key: 'viewer', label: '网页分发器', kind: 'viewer', type: 'viewer', group: '分发器' },
   // 虚拟数据
   { key: 'mocker', label: '虚拟数据发送器', kind: 'mocker', type: 'mocker', group: '虚拟数据' },
 ];
@@ -596,13 +596,13 @@ const DataFlowCanvasInner: React.FC = () => {
   const [createMenuOpen, setCreateMenuOpen] = useState(false);
   const [viewerModalId, setViewerModalId] = useState<number | null>(null);
   const [modalTarget, setModalTarget] = useState<ModalTarget | null>(null);
-  // 脚本处理器链新建时的脚本草稿（点击「编辑脚本」按钮保存的内容；为空则使用默认模板）
+  // 脚本处理器新建时的脚本草稿（点击「编辑脚本」按钮保存的内容；为空则使用默认模板）
   const [chainScriptDraft, setChainScriptDraft] = useState<string>('');
   // 脚本监听器新建时的脚本草稿
   const [connScriptDraft, setConnScriptDraft] = useState<string>('');
   // 脚本分发器新建时的脚本草稿
   const [dispScriptDraft, setDispScriptDraft] = useState<string>('');
-  // 内置处理器链新建时选择的处理器类型 + 配置草稿
+  // 内置处理器新建时选择的处理器类型 + 配置草稿
   const [builtinProcKey, setBuiltinProcKey] = useState<string>('');
   const [builtinProcConfig, setBuiltinProcConfig] = useState<Record<string, any>>({});
   // 插件容器新建时选择的插件 + 配置草稿
@@ -870,7 +870,7 @@ const DataFlowCanvasInner: React.FC = () => {
             { key: 'plugin', config: JSON.stringify({ plugin_name: pluginName, params: pluginParams }) },
           ]);
         } else if (createOption.type === 'chain') {
-          // 内置处理器链：必须已选处理器类型
+          // 内置处理器：必须已选处理器类型
           if (!builtinProcKey) {
             message.error('请选择处理器类型');
             return;
@@ -968,12 +968,13 @@ const DataFlowCanvasInner: React.FC = () => {
     setBuiltinProcConfig({});
   }, [createForm]);
 
-  // 新建脚本处理器链时，编辑初始脚本内容（草稿，创建时一起提交）
+  // 新建脚本处理器时，编辑初始脚本内容（草稿，创建时一起提交）
   const handleEditCreateChainScript = useCallback(() => {
     openScriptEditor({
-      name: '脚本处理器链草稿',
+      name: '脚本处理器草稿',
       content: chainScriptDraft || DEFAULT_CHAIN_SCRIPT,
       language: 'go',
+      scriptType: 'deal',
       onSave: async (newContent) => {
         setChainScriptDraft(newContent);
         message.success('脚本草稿已保存，创建节点时将使用此脚本');
@@ -987,6 +988,7 @@ const DataFlowCanvasInner: React.FC = () => {
       name: '脚本监听器草稿',
       content: connScriptDraft || DEFAULT_SCRIPT_CONTENT,
       language: 'go',
+      scriptType: 'listener',
       onSave: async (newContent) => {
         setConnScriptDraft(newContent);
         message.success('脚本草稿已保存，创建节点时将使用此脚本');
@@ -1000,6 +1002,7 @@ const DataFlowCanvasInner: React.FC = () => {
       name: '脚本分发器草稿',
       content: dispScriptDraft || DEFAULT_DISPATCHER_SCRIPT,
       language: 'go',
+      scriptType: 'forward',
       onSave: async (newContent) => {
         setDispScriptDraft(newContent);
         message.success('脚本草稿已保存，创建节点时将使用此脚本');
@@ -1421,7 +1424,7 @@ const DataFlowCanvasInner: React.FC = () => {
         </Space>
         <Space size={16}>
           <Tag icon={<ApiOutlined />} color="blue">监听器 {stats.listeners}</Tag>
-          <Tag icon={<ThunderboltOutlined />} color="orange">处理器链 {stats.chains}</Tag>
+          <Tag icon={<ThunderboltOutlined />} color="orange">处理器 {stats.chains}</Tag>
           <Tag icon={<SendOutlined />} color="purple">分发器 {stats.dispatchers}</Tag>
           <Tag color={stats.running > 0 ? 'success' : 'default'}>运行中 {stats.running}</Tag>
         </Space>
@@ -1449,7 +1452,7 @@ const DataFlowCanvasInner: React.FC = () => {
         )}
         {!loading && flowData && flowData.conns.length === 0 && flowData.chains.length === 0 && flowData.dispatchers.length === 0 ? (
           <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)' }}>
-            <Empty description="暂无数据流配置，请先创建监听器、处理器链和分发器" />
+            <Empty description="暂无数据流配置，请先创建监听器、处理器和分发器" />
           </div>
         ) : (
           <ReactFlow
@@ -1561,10 +1564,10 @@ const DataFlowCanvasInner: React.FC = () => {
             {createOption.kind === 'chain' && (
               <>
                 <SectionTitle title="数据流路由" color="blue" />
-                <Form.Item name="topic" label="订阅 Topic" tooltip="处理器链订阅此 topic 的消息进行处理">
+                <Form.Item name="topic" label="订阅 Topic" tooltip="处理器订阅此 topic 的消息进行处理">
                   <Input placeholder="例如：device/data" />
                 </Form.Item>
-                <Form.Item name="out_topic" label="发布 Topic" tooltip={createOption.type === 'script_chain' ? '脚本处理器链可由脚本动态决定输出 topic，这里可留空' : '处理完成后默认发布到此 topic'}>
+                <Form.Item name="out_topic" label="发布 Topic" tooltip={createOption.type === 'script_chain' ? '脚本处理器可由脚本动态决定输出 topic，这里可留空' : '处理完成后默认发布到此 topic'}>
                   <Input placeholder={createOption.type === 'script_chain' ? '脚本动态决定时可留空' : '例如：device/cleaned'} />
                 </Form.Item>
                 {createOption.type === 'script_chain' && (
